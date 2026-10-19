@@ -20,6 +20,7 @@ import {
 } from "./services/accounts.js";
 import { verifyAuditChain } from "./services/audit.js";
 import { dashboardSnapshot } from "./services/dashboard.js";
+import { getReview, getReviewImage, listReviews, resolveInput, resolveReview, reviewQuery } from "./services/reviews.js";
 import { ingestPassage, listPassages, passageBatchInput, passageInput, passageQuery } from "./services/passages.js";
 import { buildStatement, statementQuery } from "./services/statements.js";
 import { newTariffInput, scheduleTariff } from "./services/tariffs.js";
@@ -53,7 +54,7 @@ declare module "fastify" {
 const idParam = z.object({ id: z.uuid() });
 
 export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
-  const app = Fastify({ logger, bodyLimit: 2 * 1024 * 1024 });
+  const app = Fastify({ logger, bodyLimit: 8 * 1024 * 1024 });
 
   // Keep the raw body: provider callbacks are signed over the exact bytes sent.
   app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
@@ -142,7 +143,11 @@ export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
   );
 
   // --- passages -------------------------------------------------------------
-  const ingestOpts = (actor: string) => ({ actor, graceDays: config.violationGraceDays });
+  const ingestOpts = (actor: string) => ({
+    actor,
+    graceDays: config.violationGraceDays,
+    reviewThreshold: config.reviewConfidenceThreshold,
+  });
 
   app.post("/passages", { preHandler: requireRole("ingest", "admin") }, async (req, reply) => {
     const body = req.body as any;
@@ -217,6 +222,18 @@ export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
     return reconcilePendingTopups(topupDeps, older_than_seconds);
   });
 
+  // --- manual plate review ---------------------------------------------------
+  app.get("/reviews", admin, async (req) => listReviews(db, reviewQuery.parse(req.query)));
+  app.get("/reviews/:id", admin, async (req) => getReview(db, idParam.parse(req.params).id));
+  app.get("/reviews/:id/image", admin, async (req, reply) => {
+    const image = await getReviewImage(db, idParam.parse(req.params).id);
+    if (!image) return reply.code(404).send({ error: "no_image", message: "the camera sent no image for this read" });
+    return reply.type(image.type).header("cache-control", "private, max-age=3600").send(image.bytes);
+  });
+  app.post("/reviews/:id/resolve", admin, async (req) =>
+    resolveReview(db, idParam.parse(req.params).id, resolveInput.parse(req.body), req.actor, config.violationGraceDays),
+  );
+
   // --- violations -----------------------------------------------------------
   app.get("/violations", admin, async (req) => listViolations(db, violationQuery.parse(req.query)));
   app.post("/violations/:id/settle", admin, async (req) =>
@@ -250,6 +267,7 @@ export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
   // which the page asks for and keeps in localStorage.
   const dashboardFile = (name: string) => readFileSync(join(dashboardDir(), name));
   app.get("/dashboard", async (_req, reply) => reply.type("text/html; charset=utf-8").send(dashboardFile("index.html")));
+  app.get("/dashboard/review", async (_req, reply) => reply.type("text/html; charset=utf-8").send(dashboardFile("review.html")));
   app.get("/dashboard/corridor.json", async (_req, reply) => reply.type("application/json").send(dashboardFile("corridor.json")));
   app.get("/dashboard/data", admin, async (req) => {
     const { window_minutes } = z
@@ -287,5 +305,6 @@ function summarize(r: Awaited<ReturnType<typeof ingestPassage>>) {
     class_mismatch: r.passage.class_mismatch,
     violation_id: r.violation?.id ?? null,
     violation_reason: r.violation?.reason ?? null,
+    review_id: r.review_id ?? null,
   };
 }

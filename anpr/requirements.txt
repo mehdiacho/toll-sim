@@ -1,0 +1,8 @@
+# torch with CUDA comes from the PyTorch index, not PyPI:
+#   pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+# The service (server.py) needs only onnxruntime, pillow and numpy.
+torch==2.11.0
+numpy==2.5.4
+pillow==13.0.0
+onnx==1.23.2
+onnxruntime==1.31.0

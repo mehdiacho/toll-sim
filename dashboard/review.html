@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plate Review Queue</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #151b23; --line: #263040; --text: #e6edf3; --muted: #8b98a8;
+    --accent: #3fb6a8; --warn: #e3a44a; --bad: #e5604f; --good: #57c27a;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header a { color: var(--muted); text-decoration: none; font-size: 13px; }
+  header a:hover { color: var(--text); }
+  .counts { font: 600 14px var(--mono); color: var(--muted); }
+  .counts b { color: var(--warn); }
+  .who { margin-left: auto; display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+  input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font: inherit; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; padding: 16px 20px; max-width: 1300px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-width: 0; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .shot { background: #000; border-radius: 6px; display: flex; align-items: center; justify-content: center; min-height: 160px; overflow: hidden; }
+  .shot img { width: 100%; max-width: 640px; image-rendering: auto; display: block; }
+  .shot .none { color: var(--muted); padding: 40px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--muted); font-size: 13px; margin: 12px 0; }
+  .meta b { color: var(--text); font-weight: 500; }
+  .read { display: flex; align-items: baseline; gap: 14px; margin: 8px 0 14px; }
+  .read .plate { font: 600 34px var(--mono); letter-spacing: 2px; }
+  .conf { font: 600 14px var(--mono); padding: 2px 8px; border-radius: 10px; border: 1px solid currentColor; }
+  .cands { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .cand { font: 500 14px var(--mono); background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  .cand:hover, .cand:focus { border-color: var(--accent); outline: none; }
+  .cand small { color: var(--muted); margin-left: 6px; }
+  .cand kbd { color: var(--muted); font-size: 11px; margin-right: 6px; }
+  #plate { font: 600 22px var(--mono); letter-spacing: 2px; width: 220px; text-transform: uppercase; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button.act { border: 0; border-radius: 6px; padding: 10px 16px; font: 600 14px system-ui; cursor: pointer; }
+  .ok { background: var(--good); color: #062210; } .fix { background: var(--accent); color: #07211e; } .no { background: transparent; color: var(--bad); border: 1px solid var(--bad) !important; }
+  kbd { font: 11px var(--mono); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 12px; }
+  .list { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow-y: auto; }
+  .list li { display: flex; justify-content: space-between; gap: 8px; padding: 7px 4px; border-bottom: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+  .list li.cur { color: var(--accent); }
+  .list .mono { font-family: var(--mono); }
+  .done { color: var(--muted); padding: 50px 10px; text-align: center; }
+  .flash { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .flash.on { opacity: 1; }
+  #keyform { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Plate review</h1>
+  <span class="counts" id="counts">–</span>
+  <a href="/dashboard">← operations dashboard</a>
+  <div class="who">reviewer <input id="reviewer" size="12" placeholder="your name"></div>
+</header>
+<main>
+  <section class="panel" id="work">
+    <form id="keyform"><h2>Admin key</h2><input id="key" type="password" placeholder="ADMIN_API_KEY"> <button class="act fix">Connect</button></form>
+    <div id="item"><div class="done">loading…</div></div>
+  </section>
+  <aside class="panel"><h2>Queue (oldest first)</h2><ul class="list" id="list"></ul></aside>
+</main>
+<div class="flash" id="flash"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+                set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
+const params = new URLSearchParams(location.search);
+if (params.get("key")) { store.set("tollAdminKey", params.get("key")); history.replaceState(null, "", location.pathname); }
+let key = store.get("tollAdminKey");
+$("reviewer").value = store.get("tollReviewer") || "";
+$("reviewer").addEventListener("change", () => store.set("tollReviewer", $("reviewer").value.trim() || null));
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const spaced = (p) => /^B\d{3}[A-Z]{3}$/.test(p || "") ? `${p[0]} ${p.slice(1, 4)} ${p.slice(4)}` : (p || "–");
+const confColor = (c) => c >= 0.8 ? "var(--good)" : c >= 0.5 ? "var(--warn)" : "var(--bad)";
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, { ...opts, headers: { authorization: "Bearer " + key, ...(opts.body ? { "content-type": "application/json" } : {}) } });
+  if (res.status === 401 || res.status === 403) { key = null; store.set("tollAdminKey", null); showKey(); throw new Error("unauthorized"); }
+  return res;
+};
+function flash(msg) { const f = $("flash"); f.textContent = msg; f.classList.add("on"); clearTimeout(f.t); f.t = setTimeout(() => f.classList.remove("on"), 1800); }
+function showKey() { $("keyform").style.display = "block"; $("item").innerHTML = ""; }
+
+let queue = [], current = null, imgUrl = null;
+
+async function load() {
+  if (!key) return showKey();
+  const data = await (await api("/reviews?status=open&limit=100")).json();
+  queue = data.items;
+  $("counts").innerHTML = `<b>${data.open}</b> open · ${data.resolved} resolved`;
+  $("list").innerHTML = queue.map((r, i) => `<li data-i="${i}" class="${current && r.id === current.id ? "cur" : ""}">
+    <span class="mono">${esc(spaced(r.plate_read))}</span><span style="color:${confColor(r.read_confidence)}">${(r.read_confidence * 100).toFixed(0)}%</span>
+    <span style="color:var(--muted)">${esc(r.gantry_id)}</span></li>`).join("");
+  if (!current || !queue.some((r) => r.id === current.id)) show(queue[0]);
+}
+
+async function show(r) {
+  current = r || null;
+  if (imgUrl) { URL.revokeObjectURL(imgUrl); imgUrl = null; }
+  if (!r) { $("item").innerHTML = `<div class="done">Queue is empty. New low-confidence reads appear here as the gantries send them.</div>`; return; }
+  const cands = (r.candidates || []).filter((c) => c.plate !== r.plate_read);
+  const passed = new Date(r.passed_at).toLocaleString("en-GB", { timeZone: "Africa/Gaborone" });
+  $("item").innerHTML = `
+    <div class="shot" id="shot"><div class="none">${r.has_image ? "loading image…" : "no image sent with this read"}</div></div>
+    <div class="meta"><span>gantry <b>${esc(r.gantry_id)}</b></span><span>passed <b>${esc(passed)}</b></span>
+      <span>detected class <b>${esc(r.detected_class ?? "–")}</b></span><span>provisional toll <b>P ${(r.amount_thebe / 100).toFixed(2)}</b></span></div>
+    <h2>ANPR read</h2>
+    <div class="read"><span class="plate">${esc(spaced(r.plate_read))}</span>
+      <span class="conf" style="color:${confColor(r.read_confidence)}">${(r.read_confidence * 100).toFixed(1)}%</span></div>
+    ${cands.length ? `<h2>Alternatives</h2><div class="cands">${cands.map((c, i) =>
+      `<button class="cand" data-plate="${esc(c.plate)}"><kbd>${i + 1}</kbd>${esc(spaced(c.plate))}<small>${(c.confidence * 100).toFixed(1)}%</small></button>`).join("")}</div>` : ""}
+    <h2>Plate</h2>
+    <div class="actions">
+      <input id="plate" value="${esc(r.plate_read || "")}" autocomplete="off" spellcheck="false">
+      <button class="act ok" id="confirm">Confirm read <kbd>Enter</kbd></button>
+      <button class="act fix" id="correct">Save correction</button>
+      <button class="act no" id="unreadable">Unreadable <kbd>Esc</kbd></button>
+    </div>
+    <div class="hint">Enter confirms the read, or saves the correction if you edited the plate. Number keys pick an alternative. Esc marks it unreadable, so the passage is waived and nobody is billed.</div>`;
+  for (const b of document.querySelectorAll(".cand")) b.onclick = () => { $("plate").value = b.dataset.plate; $("plate").focus(); };
+  $("confirm").onclick = () => submit();
+  $("correct").onclick = () => submit();
+  $("unreadable").onclick = () => submit("unreadable");
+  $("plate").focus(); $("plate").select();
+  for (const li of document.querySelectorAll(".list li")) li.classList.toggle("cur", queue[li.dataset.i]?.id === r.id);
+  if (r.has_image) {
+    try { const blob = await (await api(`/reviews/${r.id}/image`)).blob();
+      if (current !== r) return;
+      imgUrl = URL.createObjectURL(blob); $("shot").innerHTML = `<img alt="plate crop" src="${imgUrl}">`;
+    } catch { $("shot").innerHTML = `<div class="none">image unavailable</div>`; }
+  }
+}
+
+async function submit(forced) {
+  if (!current) return;
+  const typed = $("plate").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const decision = forced || (typed === current.plate_read ? "confirmed" : "corrected");
+  if (decision === "corrected" && typed.length < 2) return flash("type the plate, or mark it unreadable");
+  const body = { decision, ...(decision === "corrected" ? { plate: typed } : {}), ...($("reviewer").value.trim() ? { reviewer: $("reviewer").value.trim() } : {}) };
+  const res = await api(`/reviews/${current.id}/resolve`, { method: "POST", body: JSON.stringify(body) });
+  const out = await res.json();
+  if (!res.ok) { flash(out.message || "could not save"); return load(); }
+  const what = { charged: "charged", unpaid: out.violation_reason === "unregistered_vehicle" ? "unregistered → violation" : "unpaid → violation", waived: "waived" }[out.passage.status] || out.passage.status;
+  flash(`${decision}: ${spaced(out.review.resolved_plate) || ""} ${what}`);
+  const i = queue.findIndex((r) => r.id === current.id);
+  queue.splice(i, 1);
+  current = null;
+  await show(queue[i] || queue[0]);
+  load();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (!current || e.target.id === "reviewer" || e.target.id === "key") return;
+  if (e.key === "Enter") { e.preventDefault(); submit(); }
+  else if (e.key === "Escape") { e.preventDefault(); submit("unreadable"); }
+  else if (/^[1-9]$/.test(e.key) && e.target.id !== "plate") { const b = document.querySelectorAll(".cand")[+e.key - 1]; if (b) b.click(); }
+});
+$("list").addEventListener("click", (e) => { const li = e.target.closest("li"); if (li) show(queue[li.dataset.i]); });
+$("keyform").addEventListener("submit", (e) => { e.preventDefault(); key = $("key").value.trim(); store.set("tollAdminKey", key); $("keyform").style.display = "none"; load(); });
+load(); setInterval(() => { if (key && document.activeElement?.id !== "plate") load(); }, 5000);
+</script>
+</body>
+</html>

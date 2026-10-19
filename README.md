@@ -13,8 +13,10 @@ statement for every account, a grace period before any unpaid passage counts
 against the driver, and payment through the channels Batswana already use:
 Orange Money, MyZaka, Smega and card.
 
-**Status:** steps 1 and 2 of 4 are done: the back-office core, and a SUMO traffic
-simulation of the A1 streaming passages into it, with a live dashboard. See [Roadmap](#roadmap).
+**Status:** steps 1 to 3 of 4 are done: the back-office core, a SUMO traffic
+simulation of the A1 streaming passages into it with a live dashboard, and a plate
+reader trained on synthetic Botswana plates with a human review queue for the reads
+it isn't sure of. See [Roadmap](#roadmap).
 
 ## What it does
 
@@ -145,6 +147,10 @@ The ingest key can only call `POST /passages`.
 | GET | `/audit?entity_type=&entity_id=`, `/audit/verify` | |
 | GET | `/dashboard` | operations dashboard page (public; asks for the admin key) |
 | GET | `/dashboard/data?window_minutes=60` | dashboard snapshot |
+| GET | `/reviews?status=open&gantry_id=` | plate review queue, oldest first |
+| GET | `/reviews/:id`, `/reviews/:id/image` | one review and its camera crop |
+| POST | `/reviews/:id/resolve` | `confirmed`, `corrected` (with `plate`) or `unreadable` |
+| GET | `/dashboard/review` | keyboard-driven review page |
 
 ## Traffic simulation (step 2)
 
@@ -202,18 +208,80 @@ has it. Delete `.pglite/` for a clean slate. `bridge.py --help` lists the noise 
 behaviour knobs. A simulated hour at the defaults gives roughly 77% charged, 16%
 unregistered and 6% short of funds.
 
+## Plate reading and review (step 3)
+
+`anpr/` is a number-plate reader trained entirely on synthetic images, and the back
+office holds any read it isn't sure of for a person to check.
+
+- **`plates.py`** draws Botswana plates (`B 123 ABC` on white or yellow, a flag strip
+  and a `BOTSWANA` caption on some, a few personalised and older formats) in five
+  fonts, then degrades them the way a gantry camera does: perspective from above the
+  lane, roll, motion blur, night-time infrared, shadow, glare, dirt, exposure, noise,
+  low resolution and JPEG. It renders about 280 crops a second per core, so training
+  never sees the same image twice. The layout is illustrative, not the official spec.
+- **`model.py`** is a small CRNN (conv layers, a 2-layer BiLSTM, CTC), about 3 M
+  parameters. Its confidence is the product of the per-character probabilities on the
+  decoded path, and it offers runner-up readings by swapping the least certain
+  characters.
+- **`train.py`** trains it on the GPU (an RTX 3060 laptop here) with mixed precision.
+  **`evaluate.py`** scores it on held-out renders in three difficulty bands, picks
+  the review threshold and exports ONNX. **`server.py`** serves the ONNX model on CPU:
+  `POST /read` takes a crop, and `POST /capture` renders a plate and reads it, which
+  is what the simulation uses.
+
+The results are in [`anpr/out/metrics.json`](anpr/out/metrics.json). The threshold is
+the lowest confidence at which automatic reads are at least 99.9% right. Below it a
+read goes to review.
+
+**Review queue.** A plate-only read (no tag) below `REVIEW_CONFIDENCE_THRESHOLD`
+(default 0.96, from `evaluate.py`) is stored with status `review`, together with the crop and the model's
+alternatives. Nobody is charged and no violation is raised while it waits. At
+`/dashboard/review` a reviewer sees the crop and the candidates. Enter confirms (or
+saves an edited plate), a number key picks an alternative, and Esc marks the plate
+unreadable. A confirmed or corrected plate is then rated exactly like an automatic
+read, with `match_method = 'manual'`, and its grace period starts from the decision,
+not the passage. An unreadable one is waived. Every decision is in the audit log, and
+a review can't be resolved twice.
+
+The thinking: an automatic read that bills the wrong person is the most expensive
+mistake a free-flow toll can make. It costs money to undo, and it costs the public
+trust that e-tolls lost. So the system bills automatically only when it's sure, and
+it sizes the human workload from measured accuracy instead of a guess.
+
+### Running it
+
+```sh
+cd anpr
+python -m venv .venv
+.venv/Scripts/pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+.venv/Scripts/pip install -r requirements.txt
+.venv/Scripts/python plates.py out/samples.png      # contact sheet of synthetic crops
+.venv/Scripts/python train.py                       # out/crnn.pt
+.venv/Scripts/python evaluate.py                    # out/metrics.json, out/crnn.onnx
+.venv/Scripts/python server.py                      # http://127.0.0.1:4100
+```
+
+The exported `out/crnn.onnx` is committed, so the service runs without training
+first (it needs only `onnxruntime`, `pillow` and `numpy`). Then run the simulation
+through the reader:
+
+```sh
+cd sim && .venv/Scripts/python bridge.py --speed 0 --hours 1 --anpr http://127.0.0.1:4100
+```
+
 ## Layout
 
 ```
 db/migrations/     schema, triggers, audit hash chain
 db/seed.sql        vehicle classes, A1 gantries, tariffs
 src/app.ts         HTTP routes
-src/services/      accounts, tariffs, passages, ledger, topups, violations, statements, audit
+src/services/      accounts, tariffs, passages, reviews, ledger, topups, violations, statements, audit
 src/payments/      gateway client and callback signing
 src/momo/          the mock mobile-money service
 scripts/dev-lite.ts
 dashboard/         operations dashboard (one HTML file) and the corridor map
 sim/               SUMO network builder, demand generator, TraCI bridge
+anpr/              synthetic plates, CRNN plate reader, ONNX service
 test/              end-to-end tests over real HTTP, with PGlite or Postgres
 ```
 
@@ -223,8 +291,8 @@ test/              end-to-end tests over real HTTP, with PGlite or Postgres
 2. **Traffic simulation.** Done. A SUMO scenario of the A1 from Gaborone to Mahalapye,
    built from OSM, streams passages from three virtual gantries over TraCI, with a
    live dashboard.
-3. **ANPR.** Synthetic Botswana plates, a plate-reading model, and a review queue for
-   low-confidence reads.
+3. **ANPR.** Done. Synthetic Botswana plates, a CRNN plate reader trained on them,
+   and a review queue for low-confidence reads.
 4. **Enforcement, disputes and a customer app.**
 
 The tariffs and gantry positions are illustrative. They are not a published or

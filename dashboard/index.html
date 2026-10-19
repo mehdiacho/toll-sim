@@ -166,10 +166,12 @@ function render(d) {
   const open = d.violations.filter((v) => v.status === "open").reduce((a, v) => a + v.count, 0);
   const kpi = (v, label, sub, cls = "") => `<div class="panel kpi"><h2>${label}</h2><div class="v ${cls}">${v}</div><div class="s">${sub}</div></div>`;
   $("kpis").innerHTML =
-    kpi(int(T.passages), "Passages", `${pct(T.by_tag, T.passages)} matched by tag · ${pct(T.by_plate, T.passages)} by plate`) +
+    kpi(int(T.passages), "Passages", `${pct(T.by_tag, T.passages)} matched by tag · ${pct(T.by_plate, T.passages)} by plate · ${pct(T.by_review, T.passages)} by reviewer`) +
     kpi(pulaShort(T.revenue_thebe), "Revenue", `${int(T.charged)} charged passages`, "charged") +
     kpi(int(T.unpaid), "Unpaid", `${pulaShort(T.unpaid_thebe)} outstanding at the time`, "unpaid") +
     kpi(int(open), "Open violations", "grace period running") +
+    kpi(`<a href="review${location.search}" style="color:inherit">${int(d.reviews.open)}</a>`, "Plate review",
+        `${int(d.reviews.confirmed)} confirmed · ${int(d.reviews.corrected)} corrected · ${int(d.reviews.unreadable)} unreadable`, d.reviews.open ? "unpaid" : "") +
     kpi(int(T.class_mismatch), "Class mismatch", `${pct(T.class_mismatch, T.passages)} detector ≠ registered`) +
     kpi(`${int(ok)}/${int(all)}`, "Top-ups ok", "succeeded / started") +
     kpi(int(d.audit.entries), "Audit entries", d.audit.last_at ? "last " + timeOf(d.audit.last_at) : "–");

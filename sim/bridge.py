@@ -8,7 +8,9 @@
      unregistered one.
   3. Every simulation step it reads the gantries' induction loops and turns each
      crossing into a gantry read, with realistic noise: missed tag reads, camera
-     misreads and the odd wrong classification.
+     misreads and the odd wrong classification. With --anpr, plates are instead
+     rendered as camera crops and read by the trained model (anpr/server.py), and
+     low-confidence reads carry the image so they can go to the review queue.
   4. Reads are POSTed to /passages in batches, timestamped on a simulated clock.
      When the back office reports a passage unpaid for lack of funds, the owner
      sometimes tops up, which settles the debt on the back office side.
@@ -17,6 +19,7 @@ Usage (back office running, e.g. `npm run dev:lite` in the repo root):
   .venv/Scripts/python bridge.py                 # headless, 10x real time
   .venv/Scripts/python bridge.py --gui           # watch it in sumo-gui
   .venv/Scripts/python bridge.py --speed 0       # as fast as possible
+  .venv/Scripts/python bridge.py --anpr http://127.0.0.1:4100   # real plate reader
 """
 
 from __future__ import annotations
@@ -67,6 +70,16 @@ class Api:
         except urllib.error.HTTPError as e:
             text = e.read().decode()
             return e.code, json.loads(text) if text else None
+
+
+def http_json(url: str, body: dict, timeout: float = 10):
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+    req.add_header("content-type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            return res.status, json.loads(res.read())
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
 
 
 # ------------------------------------------------------------------------- fleet
@@ -214,7 +227,19 @@ def gantry_read(ident: Identity, rng: random.Random, args) -> dict:
     read: dict = {}
     if ident.tag_id and rng.random() > args.tag_miss_rate:
         read["tag_id"] = ident.tag_id
-    if rng.random() < args.misread_rate:
+    if args.anpr:
+        # The real reader: render the plate as the gantry camera would capture it and read it.
+        # Most passages are easy; a tail are night, rain, dirt or a fast lane change.
+        difficulty = min(1.6, rng.betavariate(2, 3) * 2)
+        status, r = http_json(f"{args.anpr}/capture", {"plate": ident.plate, "difficulty": difficulty, "seed": rng.getrandbits(32)})
+        if status != 200:
+            raise RuntimeError(f"ANPR service: {status} {r}")
+        read["plate"] = r["plate"] or None
+        read["read_confidence"] = r["confidence"]
+        read["read_candidates"] = r["candidates"][:5]
+        if r["confidence"] < args.review_threshold:
+            read["image_b64"] = r["image_b64"]  # only reads that may go to a reviewer carry the crop
+    elif rng.random() < args.misread_rate:
         read["plate"] = misread(ident.plate, rng)
         read["read_confidence"] = round(rng.uniform(0.55, 0.85), 3)
     else:
@@ -246,7 +271,7 @@ class Stats:
         return (
             f"reads {c.get('reads', 0)} | charged {c.get('charged', 0)} | unpaid {c.get('unpaid', 0)} "
             f"(no funds {c.get('insufficient_funds', 0)}, unregistered {c.get('unregistered_vehicle', 0)}) | "
-            f"dup {c.get('duplicate', 0)} | errors {c.get('error', 0)} | top-ups {c.get('topups', 0)}"
+            f"review {c.get('review', 0)} | ocr wrong {c.get('ocr_wrong', 0)} | dup {c.get('duplicate', 0)} | errors {c.get('error', 0)} | top-ups {c.get('topups', 0)}"
         )
 
 
@@ -267,6 +292,10 @@ def main() -> None:
     ap.add_argument("--misread-rate", type=float, default=0.02)
     ap.add_argument("--misclass-rate", type=float, default=0.03)
     ap.add_argument("--topup-response", type=float, default=0.5, help="chance an owner tops up after an unpaid passage")
+    ap.add_argument("--anpr", default=None, metavar="URL",
+                    help="read plates with the ANPR service (e.g. http://127.0.0.1:4100) instead of a misread rate")
+    ap.add_argument("--review-threshold", type=float, default=float(os.environ.get("REVIEW_CONFIDENCE_THRESHOLD", 0.96)),
+                    help="attach the image to reads below this confidence (match the back office's setting)")
     ap.add_argument("--batch", type=int, default=50, help="max reads per POST")
     ap.add_argument("--fresh-fleet", action="store_true")
     ap.add_argument("--seed", type=int, default=7)
@@ -349,6 +378,8 @@ def main() -> None:
             if r["duplicate"]:
                 stats.add("duplicate")
                 continue
+            if read.get("plate") != read.get("true_plate"):
+                stats.add("ocr_wrong")
             stats.add(r["status"])
             if r["violation_reason"]:
                 stats.add(r["violation_reason"])

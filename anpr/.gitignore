@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+out/*
+# The exported model and its measurements are small and are what the service runs.
+!out/crnn.onnx
+!out/metrics.json
+!out/samples.png

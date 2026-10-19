@@ -11,6 +11,8 @@ export interface Config {
   /** Base URL the payment service uses to reach our callback endpoint. */
   publicBaseUrl: string;
   violationGraceDays: number;
+  /** Plate reads under this ANPR confidence, with no tag match, wait for manual review. */
+  reviewConfidenceThreshold: number;
   topupMinThebe: number;
   topupMaxThebe: number;
 }
@@ -34,6 +36,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     momoWebhookSecret: required(env, "MOMO_WEBHOOK_SECRET"),
     publicBaseUrl: env.PUBLIC_BASE_URL ?? `http://localhost:${port}`,
     violationGraceDays: Number(env.VIOLATION_GRACE_DAYS ?? 7),
+    reviewConfidenceThreshold: Number(env.REVIEW_CONFIDENCE_THRESHOLD ?? 0.96),
     topupMinThebe: Number(env.TOPUP_MIN_THEBE ?? 1000),
     topupMaxThebe: Number(env.TOPUP_MAX_THEBE ?? 500000),
   };

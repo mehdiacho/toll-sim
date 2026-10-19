@@ -7,11 +7,13 @@ import type { Queryable } from "../db/index.js";
  * passage rather than at now().
  */
 export async function dashboardSnapshot(q: Queryable, windowMinutes = 60) {
-  const [totals, gantries, classes, series, recent, topups, violations, audit] = await Promise.all([
+  const [totals, gantries, classes, series, recent, topups, violations, audit, reviews] = await Promise.all([
     q.query(`
       SELECT count(*)::int                                                    AS passages,
              count(*) FILTER (WHERE status = 'charged')::int                  AS charged,
              count(*) FILTER (WHERE status = 'unpaid')::int                   AS unpaid,
+             count(*) FILTER (WHERE status = 'review')::int                   AS in_review,
+             count(*) FILTER (WHERE match_method = 'manual')::int             AS by_review,
              count(*) FILTER (WHERE match_method = 'tag')::int                AS by_tag,
              count(*) FILTER (WHERE match_method = 'plate')::int              AS by_plate,
              count(*) FILTER (WHERE class_mismatch)::int                      AS class_mismatch,
@@ -58,6 +60,12 @@ export async function dashboardSnapshot(q: Queryable, windowMinutes = 60) {
       SELECT status, reason, count(*)::int AS count, coalesce(sum(amount_due_thebe), 0)::bigint AS amount_thebe
       FROM violations GROUP BY status, reason ORDER BY status, reason`),
     q.query(`SELECT count(*)::int AS entries, max(at) AS last_at FROM audit_log`),
+    q.query(`
+      SELECT count(*) FILTER (WHERE status = 'open')::int                     AS open,
+             count(*) FILTER (WHERE decision = 'confirmed')::int              AS confirmed,
+             count(*) FILTER (WHERE decision = 'corrected')::int              AS corrected,
+             count(*) FILTER (WHERE decision = 'unreadable')::int             AS unreadable
+      FROM plate_reviews`),
   ]);
 
   // pg returns bigint as string; the dashboard wants numbers (all well inside 2^53).
@@ -74,5 +82,6 @@ export async function dashboardSnapshot(q: Queryable, windowMinutes = 60) {
     topups: num(topups.rows),
     violations: num(violations.rows),
     audit: audit.rows[0],
+    reviews: reviews.rows[0],
   };
 }
