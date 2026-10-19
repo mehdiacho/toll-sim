@@ -1,0 +1,54 @@
+# Back office + Postgres + mock mobile-money service.
+#   cp .env.example .env   (then change the secrets)
+#   docker compose up --build
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: toll
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: toll
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U toll -d toll"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  momo:
+    build: .
+    command: ["node", "dist/src/momo/server.js"]
+    environment:
+      PORT: 4000
+      MOMO_WEBHOOK_SECRET: ${MOMO_WEBHOOK_SECRET:?set MOMO_WEBHOOK_SECRET in .env}
+      MOMO_CALLBACK_DELAY_MS: ${MOMO_CALLBACK_DELAY_MS:-1500}
+    ports:
+      - "${MOMO_PORT:-4000}:4000"
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      momo:
+        condition: service_started
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://toll:${POSTGRES_PASSWORD}@db:5432/toll
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY in .env}
+      INGEST_API_KEY: ${INGEST_API_KEY:?set INGEST_API_KEY in .env}
+      MOMO_BASE_URL: http://momo:4000
+      MOMO_WEBHOOK_SECRET: ${MOMO_WEBHOOK_SECRET}
+      PUBLIC_BASE_URL: http://api:3000
+      VIOLATION_GRACE_DAYS: ${VIOLATION_GRACE_DAYS:-7}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
