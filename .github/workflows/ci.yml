@@ -1,0 +1,54 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        database: [pglite, postgres]
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: toll
+          POSTGRES_PASSWORD: toll
+          POSTGRES_DB: toll_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U toll -d toll_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - name: test (${{ matrix.database }})
+        run: npm test
+        env:
+          TEST_DATABASE_URL: ${{ matrix.database == 'postgres' && 'postgres://toll:toll@localhost:5432/toll_test' || '' }}
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: compose smoke test
+        run: |
+          cp .env.example .env
+          docker compose up -d --build --wait
+          H='authorization: Bearer change-me-admin'; J='content-type: application/json'
+          ACC=$(curl -sf -H "$H" -H "$J" localhost:3000/accounts -d '{"holder_name":"CI"}' | jq -r .id)
+          curl -sf -H "$H" -H "$J" localhost:3000/accounts/$ACC/vehicles -d '{"plate":"B100CIA","vehicle_class":"1"}'
+          curl -sf -H "$H" -H "$J" localhost:3000/accounts/$ACC/topups -d '{"provider":"smega","amount_thebe":5000,"msisdn":"73000001"}'
+          sleep 4
+          curl -sf -H 'authorization: Bearer change-me-ingest' -H "$J" localhost:3000/passages \
+            -d '{"source_event_id":"ci-1","gantry_id":"A1-G01","passed_at":"2026-10-19T08:00:00Z","plate":"B100CIA"}'
+          test "$(curl -sf -H "$H" localhost:3000/accounts/$ACC | jq .balance_thebe)" = "3500"
+          test "$(curl -sf -H "$H" localhost:3000/audit/verify | jq .ok)" = "true"
+      - if: failure()
+        run: docker compose logs
