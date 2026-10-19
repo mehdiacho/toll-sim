@@ -169,7 +169,9 @@ function render(d) {
     kpi(int(T.passages), "Passages", `${pct(T.by_tag, T.passages)} matched by tag · ${pct(T.by_plate, T.passages)} by plate · ${pct(T.by_review, T.passages)} by reviewer`) +
     kpi(pulaShort(T.revenue_thebe), "Revenue", `${int(T.charged)} charged passages`, "charged") +
     kpi(int(T.unpaid), "Unpaid", `${pulaShort(T.unpaid_thebe)} outstanding at the time`, "unpaid") +
-    kpi(int(open), "Open violations", "grace period running") +
+    kpi(int(open), "Open violations", d.enforcement ? `${int(d.enforcement.grace)} in grace · ${int(d.enforcement.notice + d.enforcement.final_notice)} noticed · ${int(d.enforcement.referred)} referred` : "grace period running") +
+    kpi(`<a href="disputes${location.search}" style="color:inherit">${int(d.disputes?.open ?? 0)}</a>`, "Disputes",
+        `${int(d.disputes?.upheld ?? 0)} upheld · ${int(d.disputes?.rejected ?? 0)} rejected · <a href="disputes${location.search}#enforcement" style="color:inherit">hotlist ${int(d.enforcement?.hotlist_plates ?? 0)}</a>`, d.disputes?.open ? "unpaid" : "") +
     kpi(`<a href="review${location.search}" style="color:inherit">${int(d.reviews.open)}</a>`, "Plate review",
         `${int(d.reviews.confirmed)} confirmed · ${int(d.reviews.corrected)} corrected · ${int(d.reviews.unreadable)} unreadable`, d.reviews.open ? "unpaid" : "") +
     kpi(int(T.class_mismatch), "Class mismatch", `${pct(T.class_mismatch, T.passages)} detector ≠ registered`) +

@@ -13,10 +13,11 @@ statement for every account, a grace period before any unpaid passage counts
 against the driver, and payment through the channels Batswana already use:
 Orange Money, MyZaka, Smega and card.
 
-**Status:** steps 1 to 3 of 4 are done: the back-office core, a SUMO traffic
-simulation of the A1 streaming passages into it with a live dashboard, and a plate
+**Status:** all four steps are done: the back-office core, a SUMO traffic
+simulation of the A1 streaming passages into it with a live dashboard, a plate
 reader trained on synthetic Botswana plates with a human review queue for the reads
-it isn't sure of. See [Roadmap](#roadmap).
+it isn't sure of, and enforcement, disputes and a mobile-first customer app. See
+[Roadmap](#roadmap).
 
 ## What it does
 
@@ -70,8 +71,9 @@ process, so nothing else has to be installed.
 
 ```sh
 npm install
-npm test            # 48 tests, about 6 s
+npm test            # 84 tests, about 16 s
 npm run dev:lite    # API on :3000 + mock payments on :4000, data in .pglite/
+                    # customer app: http://127.0.0.1:3000/app
 ```
 
 ### With Docker Compose (Postgres 17)
@@ -122,8 +124,9 @@ curl -s -H "$H" $API/audit/verify
 
 ## API
 
-Every route except `/health` and the provider callbacks needs `Authorization: Bearer <key>`.
-The ingest key can only call `POST /passages`.
+Every route except `/health`, the provider callbacks, the static pages and `/auth/*`
+needs `Authorization: Bearer <key>`. The ingest key can only call `POST /passages`.
+The `/me` routes take a customer session token instead, and an admin key is not one.
 
 | Method | Path | |
 | --- | --- | --- |
@@ -151,6 +154,22 @@ The ingest key can only call `POST /passages`.
 | GET | `/reviews/:id`, `/reviews/:id/image` | one review and its camera crop |
 | POST | `/reviews/:id/resolve` | `confirmed`, `corrected` (with `plate`) or `unreadable` |
 | GET | `/dashboard/review` | keyboard-driven review page |
+| POST | `/admin/run-enforcement` | run the enforcement ladder now (`{ "at": ... }` to fast-forward) |
+| GET | `/enforcement/hotlist`, `/admin/outbox?kind=` | referred plates; every notice "sent" |
+| GET / POST | `/disputes?status=` | dispute queue; raise one for a motorist |
+| GET | `/disputes/:id`, `/disputes/:id/evidence/:evidenceId` | one dispute with passage, history and evidence |
+| POST | `/disputes/:id/resolve` | `upheld` (optionally with `corrected_class`) or `rejected`, with a note |
+| GET | `/passages/:id/image` | camera crop kept for review |
+| GET | `/dashboard/disputes` | dispute and enforcement desk |
+| POST | `/auth/code`, `/auth/verify`, `/auth/logout` | customer SMS sign-in and sign-up |
+| GET / PATCH | `/me` | home summary; update name or email |
+| POST / DELETE | `/me/vehicles`, `/me/vehicles/:id` | |
+| GET | `/me/passages`, `/me/passages/:id/image`, `/me/statement?from=&to=` | |
+| POST / GET | `/me/topups`, `/me/topups/:id` | mobile-money top-up, honours `Idempotency-Key` |
+| GET / POST | `/me/violations`, `/me/violations/:id/pay` | |
+| GET / POST | `/me/disputes`, `/me/disputes/:id` | |
+| GET | `/me/notices` | SMS, email and letters sent to this account |
+| GET | `/app` | the customer web app |
 
 ## Traffic simulation (step 2)
 
@@ -269,17 +288,81 @@ through the reader:
 cd sim && .venv/Scripts/python bridge.py --speed 0 --hours 1 --anpr http://127.0.0.1:4100
 ```
 
+## Enforcement, disputes and the customer app (step 4)
+
+**Enforcement.** An unpaid passage starts in a grace period (7 days). After that it
+climbs a ladder, one step per run of the enforcement job (hourly by default):
+
+| Stage | When | What happens |
+| --- | --- | --- |
+| `grace` | from the passage | nothing; paying costs only the toll |
+| `notice` | grace ends | first notice, plus a P50 admin fee |
+| `final_notice` | 14 days later | final notice, plus a P150 late fee |
+| `referred` | 14 days after that | the plate goes on the hotlist for roadside enforcement |
+
+Each step is its own transaction with an audit row and a notice in the outbox. A
+registered motorist gets an SMS (and an email if they gave one). An unregistered
+plate gets a letter addressed to the registered keeper. Nothing is really sent: the
+outbox is the record. The job is idempotent and catches up, so a violation that has
+been overdue for a month goes through every step in one run, but is still charged
+each fee only once. A violation under dispute is skipped. When a referred plate
+passes a gantry again, the passage records the hotlist hit. Fees are posted to the
+ledger as separate `penalty` lines, so the statement shows the toll and the fees
+apart, and a top-up settles both.
+
+**Disputes.** A motorist can contest any passage on their account within 90 days:
+not my vehicle, plate misread, wrong class, already paid, or other. They can attach
+up to three photos or PDFs (2 MB each, checked by content, not by the file name).
+There can be only one open dispute per passage, and none after one has been upheld.
+While a dispute is open, enforcement is paused for that violation. An operator
+decides at `/dashboard/disputes`, which shows the claim, the evidence, the camera
+crop, the passage facts, the account's registered vehicles and the full audit
+trail. The decision needs a note.
+
+- **Upheld** waives an open violation along with its fees, or refunds a toll that
+  was already charged.
+- **Upheld with a corrected class** re-rates the passage at the right class. It
+  refunds the difference and never raises the charge.
+- **Rejected** gives back the time the dispute was open, so contesting a charge
+  doesn't cost the motorist their grace period.
+
+The motorist is notified either way, and every step is in the audit log.
+
+**Customer app.** `/app` is a mobile-first web app (one HTML file, no build step,
+installable through its manifest). People sign in with a code sent by SMS. An
+unknown number is asked for a name and becomes a new account. Sessions last 30 days
+and are stored hashed. In the app a motorist can:
+
+- register vehicles
+- top up through the mock mobile money and watch the payment complete
+- see trips with the gantry and the camera image, and monthly statements
+- pay violations, including ones from before they registered the plate
+- raise and follow disputes
+- read every notice sent to them
+
+The `/me` routes only ever see the signed-in account's own data, and there is a test
+that checks this. With `EXPOSE_LOGIN_CODES=1` (on in `dev:lite`, off by default) the
+sign-in code comes back in the API response, so the demo works without an SMS
+gateway.
+
+**Known limitation.** Registering a plate in the app is taken on trust. A real
+operator would check ownership against the national vehicle registry before letting
+someone see, dispute or pay that plate's passages. That integration is out of scope
+here.
+
 ## Layout
 
 ```
 db/migrations/     schema, triggers, audit hash chain
 db/seed.sql        vehicle classes, A1 gantries, tariffs
 src/app.ts         HTTP routes
-src/services/      accounts, tariffs, passages, reviews, ledger, topups, violations, statements, audit
+src/services/      accounts, tariffs, passages, reviews, ledger, topups, violations, statements, audit,
+                   enforcement, disputes, customers, outbox
 src/payments/      gateway client and callback signing
 src/momo/          the mock mobile-money service
 scripts/dev-lite.ts
-dashboard/         operations dashboard (one HTML file) and the corridor map
+dashboard/         operations dashboard, review page, dispute desk and the corridor map
+customer/          the customer web app and its manifest
 sim/               SUMO network builder, demand generator, TraCI bridge
 anpr/              synthetic plates, CRNN plate reader, ONNX service
 test/              end-to-end tests over real HTTP, with PGlite or Postgres
@@ -293,7 +376,9 @@ test/              end-to-end tests over real HTTP, with PGlite or Postgres
    live dashboard.
 3. **ANPR.** Done. Synthetic Botswana plates, a CRNN plate reader trained on them,
    and a review queue for low-confidence reads.
-4. **Enforcement, disputes and a customer app.**
+4. **Enforcement, disputes and a customer app.** Done. An escalating notice and fee
+   ladder ending in a hotlist, audited disputes with evidence, and a mobile-first
+   customer app with SMS sign-in.
 
-The tariffs and gantry positions are illustrative. They are not a published or
+The tariffs, fees and gantry positions are illustrative. They are not a published or
 proposed Botswana toll schedule.

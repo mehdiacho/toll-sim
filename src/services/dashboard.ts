@@ -7,7 +7,7 @@ import type { Queryable } from "../db/index.js";
  * passage rather than at now().
  */
 export async function dashboardSnapshot(q: Queryable, windowMinutes = 60) {
-  const [totals, gantries, classes, series, recent, topups, violations, audit, reviews] = await Promise.all([
+  const [totals, gantries, classes, series, recent, topups, violations, audit, reviews, disputes, enforcement] = await Promise.all([
     q.query(`
       SELECT count(*)::int                                                    AS passages,
              count(*) FILTER (WHERE status = 'charged')::int                  AS charged,
@@ -66,6 +66,22 @@ export async function dashboardSnapshot(q: Queryable, windowMinutes = 60) {
              count(*) FILTER (WHERE decision = 'corrected')::int              AS corrected,
              count(*) FILTER (WHERE decision = 'unreadable')::int             AS unreadable
       FROM plate_reviews`),
+    q.query(`
+      SELECT count(*) FILTER (WHERE status = 'open')::int                     AS open,
+             count(*) FILTER (WHERE status = 'upheld')::int                   AS upheld,
+             count(*) FILTER (WHERE status = 'rejected')::int                 AS rejected,
+             coalesce(sum(refund_thebe), 0)::bigint                           AS refunded_thebe,
+             min(created_at) FILTER (WHERE status = 'open')                   AS oldest_open
+      FROM disputes`),
+    q.query(`
+      SELECT count(*) FILTER (WHERE stage = 'grace')::int                     AS grace,
+             count(*) FILTER (WHERE stage = 'notice')::int                    AS notice,
+             count(*) FILTER (WHERE stage = 'final_notice')::int              AS final_notice,
+             count(*) FILTER (WHERE stage = 'referred')::int                  AS referred,
+             count(DISTINCT plate) FILTER (WHERE stage = 'referred')::int     AS hotlist_plates,
+             coalesce(sum(amount_due_thebe + penalty_thebe), 0)::bigint       AS owed_thebe,
+             coalesce(sum(penalty_thebe), 0)::bigint                          AS penalties_thebe
+      FROM violations WHERE status = 'open'`),
   ]);
 
   // pg returns bigint as string; the dashboard wants numbers (all well inside 2^53).
@@ -83,5 +99,7 @@ export async function dashboardSnapshot(q: Queryable, windowMinutes = 60) {
     violations: num(violations.rows),
     audit: audit.rows[0],
     reviews: reviews.rows[0],
+    disputes: num(disputes.rows)[0],
+    enforcement: num(enforcement.rows)[0],
   };
 }

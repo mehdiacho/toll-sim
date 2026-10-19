@@ -24,7 +24,7 @@ describe("statements", () => {
 
     const full = (await h.request("GET", `/accounts/${account.id}/statement`)).body;
     expect(full.opening_balance_thebe).toBe(0);
-    expect(full.totals).toEqual({ topups_thebe: 15000, tolls_thebe: 3000, adjustments_thebe: 0 });
+    expect(full.totals).toEqual({ topups_thebe: 15000, tolls_thebe: 3000, penalties_thebe: 0, refunds_thebe: 0, adjustments_thebe: 0 });
     expect(full.closing_balance_thebe).toBe(12000);
     expect(full.entries.map((e: any) => e.kind)).toEqual(["topup", "topup", "toll", "toll"]);
     expect(full.entries[2]).toMatchObject({ gantry_id: "A1-G01", charged_class: "1", plate_read: plate });

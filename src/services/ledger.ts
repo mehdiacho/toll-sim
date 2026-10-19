@@ -2,7 +2,7 @@ import type { Queryable } from "../db/index.js";
 import { AppError, notFound } from "../errors.js";
 
 export interface LedgerPosting {
-  kind: "topup" | "toll" | "adjustment";
+  kind: "topup" | "toll" | "penalty" | "refund" | "adjustment";
   /** Positive credits the account, negative debits it. */
   amountThebe: number;
   description: string;

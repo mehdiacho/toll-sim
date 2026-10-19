@@ -20,6 +20,16 @@ describe("dashboard", () => {
     expect(map.body.polyline.length).toBeGreaterThan(10);
   });
 
+  it("serves the disputes page and the customer app", async () => {
+    for (const [path, text] of [["/dashboard/disputes", "Disputes &amp; enforcement"], ["/app", "A1 Toll"]]) {
+      const page = await fetch(h.baseUrl + path);
+      expect(page.status).toBe(200);
+      expect(await page.text()).toContain(text);
+    }
+    const manifest = await fetch(h.baseUrl + "/app/manifest.webmanifest");
+    expect((await manifest.json()).start_url).toBe("/app");
+  });
+
   it("keeps the numbers behind the admin key", async () => {
     expect((await h.request("GET", "/dashboard/data", undefined, { key: null })).status).toBe(401);
     expect((await h.request("GET", "/dashboard/data", undefined, { key: INGEST })).status).toBe(403);

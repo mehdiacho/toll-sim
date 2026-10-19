@@ -15,6 +15,25 @@ export interface Config {
   reviewConfidenceThreshold: number;
   topupMinThebe: number;
   topupMaxThebe: number;
+  enforcement: EnforcementPolicy;
+  /** Run the enforcement ladder on a timer (minutes); 0 leaves it to POST /admin/run-enforcement. */
+  enforcementIntervalMinutes: number;
+  /** Days after a passage during which the motorist can dispute it. */
+  disputeWindowDays: number;
+  customerSessionDays: number;
+  /** Development only: return the sign-in code in the API response instead of only "sending" it. */
+  exposeLoginCodes: boolean;
+}
+
+export interface EnforcementPolicy {
+  /** Added when the grace period ends and the first notice goes out. */
+  adminFeeThebe: number;
+  /** Added with the final notice. */
+  lateFeeThebe: number;
+  /** Days from the first notice to the final notice. */
+  finalNoticeDays: number;
+  /** Days from the final notice to referral (the roadside hotlist). */
+  referralDays: number;
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -39,5 +58,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     reviewConfidenceThreshold: Number(env.REVIEW_CONFIDENCE_THRESHOLD ?? 0.96),
     topupMinThebe: Number(env.TOPUP_MIN_THEBE ?? 1000),
     topupMaxThebe: Number(env.TOPUP_MAX_THEBE ?? 500000),
+    enforcement: {
+      adminFeeThebe: Number(env.ENFORCEMENT_ADMIN_FEE_THEBE ?? 5000),
+      lateFeeThebe: Number(env.ENFORCEMENT_LATE_FEE_THEBE ?? 15000),
+      finalNoticeDays: Number(env.ENFORCEMENT_FINAL_NOTICE_DAYS ?? 14),
+      referralDays: Number(env.ENFORCEMENT_REFERRAL_DAYS ?? 14),
+    },
+    enforcementIntervalMinutes: Number(env.ENFORCEMENT_INTERVAL_MINUTES ?? 0),
+    disputeWindowDays: Number(env.DISPUTE_WINDOW_DAYS ?? 90),
+    customerSessionDays: Number(env.CUSTOMER_SESSION_DAYS ?? 30),
+    exposeLoginCodes: env.EXPOSE_LOGIN_CODES === "1",
   };
 }

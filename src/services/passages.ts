@@ -3,6 +3,7 @@ import type { Db, Queryable } from "../db/index.js";
 import { unprocessable } from "../errors.js";
 import { normalizePlate } from "../identifiers.js";
 import { audit } from "./audit.js";
+import { hotlistHit } from "./enforcement.js";
 import { lockedBalance, post } from "./ledger.js";
 import { findTariff } from "./tariffs.js";
 
@@ -36,6 +37,8 @@ export interface IngestResult {
   passage: Record<string, any>;
   violation?: Record<string, any>;
   review_id?: string;
+  /** The plate is wanted for referred violations: patrol should be alerted. */
+  hotlist?: { violations: number; owed_thebe: number } | null;
 }
 
 export interface IngestOptions {
@@ -174,6 +177,10 @@ async function ingestInTx(q: Queryable, input: PassageInput, opts: IngestOptions
   );
   const passage = rows[0];
   const violation = await settle(q, passage, d, plate, input.passed_at, opts.graceDays);
+  const wanted = plate ? await hotlistHit(q, plate) : null;
+  if (wanted) {
+    await audit(q, opts.actor, "enforcement.hotlist_hit", "passage", passage.id, { plate, gantry_id: input.gantry_id, ...wanted });
+  }
 
   await audit(q, opts.actor, "passage.rated", "passage", passage.id, {
     gantry_id: input.gantry_id,
@@ -187,7 +194,7 @@ async function ingestInTx(q: Queryable, input: PassageInput, opts: IngestOptions
     violation_reason: d.violationReason,
   });
 
-  return { duplicate: false, passage, violation };
+  return { duplicate: false, passage, violation, hotlist: wanted };
 }
 
 export type VehicleMatch = { id: string; account_id: string; vehicle_class: string };
@@ -305,7 +312,7 @@ export const passageQuery = z.object({
   plate: z.string().optional(),
   gantry_id: z.string().optional(),
   account_id: z.uuid().optional(),
-  status: z.enum(["charged", "unpaid", "waived", "review"]).optional(),
+  status: z.enum(["charged", "unpaid", "waived", "review", "refunded"]).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
 });
 

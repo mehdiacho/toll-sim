@@ -19,6 +19,36 @@ import {
   setAccountStatus,
 } from "./services/accounts.js";
 import { verifyAuditChain } from "./services/audit.js";
+import {
+  assertMyViolation,
+  logout,
+  myNotices,
+  myPassages,
+  myPassagesQuery,
+  myViolations,
+  overview,
+  sessionAccount,
+  startLogin,
+  startLoginInput,
+  updateProfile,
+  updateProfileInput,
+  verifyLogin,
+  verifyLoginInput,
+} from "./services/customers.js";
+import {
+  canActOnPassage,
+  disputeQuery,
+  getDispute,
+  getEvidence,
+  getPassageImage,
+  listDisputes,
+  raiseDispute,
+  raiseDisputeInput,
+  resolveDispute,
+  resolveDisputeInput,
+} from "./services/disputes.js";
+import { hotlist, runEnforcement } from "./services/enforcement.js";
+import { listOutbox, outboxQuery } from "./services/outbox.js";
 import { dashboardSnapshot } from "./services/dashboard.js";
 import { getReview, getReviewImage, listReviews, resolveInput, resolveReview, reviewQuery } from "./services/reviews.js";
 import { ingestPassage, listPassages, passageBatchInput, passageInput, passageQuery } from "./services/passages.js";
@@ -47,11 +77,18 @@ type Role = "admin" | "ingest";
 declare module "fastify" {
   interface FastifyRequest {
     actor: string;
+    /** Set on customer-app requests: the signed-in motorist's account. */
+    accountId: string;
     rawBody?: string;
   }
 }
 
 const idParam = z.object({ id: z.uuid() });
+const evidenceParam = z.object({ id: z.uuid(), evidenceId: z.uuid() });
+const bearer = (req: FastifyRequest) => {
+  const h = req.headers.authorization ?? "";
+  return h.startsWith("Bearer ") ? h.slice(7) : "";
+};
 
 export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
   const app = Fastify({ logger, bodyLimit: 8 * 1024 * 1024 });
@@ -93,6 +130,16 @@ export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
     req.actor = role === "admin" ? "admin" : "gantry";
   };
   const admin = { preHandler: requireRole("admin") };
+
+  /** Customer-app session tokens, issued by POST /auth/verify. */
+  const customer = {
+    preHandler: async (req: FastifyRequest, reply: FastifyReply) => {
+      const accountId = await sessionAccount(db, bearer(req));
+      if (!accountId) return reply.code(401).send({ error: "unauthorized", message: "please sign in again" });
+      req.accountId = accountId;
+      req.actor = `customer:${accountId}`;
+    },
+  };
 
   const topupDeps: TopupDeps = {
     db,
@@ -243,6 +290,96 @@ export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
     waiveViolation(db, idParam.parse(req.params).id, waiveInput.parse(req.body).reason, req.actor),
   );
 
+  // --- enforcement -----------------------------------------------------------
+  app.post("/admin/run-enforcement", admin, async (req) => {
+    const { at } = z.object({ at: z.coerce.date().optional() }).parse(req.body ?? {});
+    return runEnforcement(db, config.enforcement, at ?? new Date(), req.actor);
+  });
+  app.get("/enforcement/hotlist", admin, async () => hotlist(db));
+  app.get("/admin/outbox", admin, async (req) => listOutbox(db, outboxQuery.parse(req.query)));
+
+  // --- disputes (operator side) ----------------------------------------------
+  app.get("/disputes", admin, async (req) => listDisputes(db, disputeQuery.parse(req.query)));
+  app.post("/disputes", admin, async (req, reply) => {
+    const d = await raiseDispute(db, raiseDisputeInput.parse(req.body), { actor: req.actor, windowDays: config.disputeWindowDays });
+    return reply.code(201).send(d);
+  });
+  app.get("/disputes/:id", admin, async (req) => getDispute(db, idParam.parse(req.params).id));
+  app.get("/disputes/:id/evidence/:evidenceId", admin, async (req, reply) => {
+    const { id, evidenceId } = evidenceParam.parse(req.params);
+    const e = await getEvidence(db, id, evidenceId);
+    const name = e.filename.replace(/[^\w.\- ]/g, "_");
+    return reply.type(e.content_type).header("content-disposition", `inline; filename="${name}"`).send(Buffer.from(e.data));
+  });
+  app.post("/disputes/:id/resolve", admin, async (req) =>
+    resolveDispute(db, idParam.parse(req.params).id, resolveDisputeInput.parse(req.body), req.actor),
+  );
+  app.get("/passages/:id/image", admin, async (req, reply) => sendImage(reply, await getPassageImage(db, idParam.parse(req.params).id)));
+
+  // --- customer app ------------------------------------------------------------
+  app.post("/auth/code", async (req) => startLogin(db, startLoginInput.parse(req.body).phone, config.exposeLoginCodes));
+  app.post("/auth/verify", async (req) => verifyLogin(db, verifyLoginInput.parse(req.body), config.customerSessionDays));
+  app.post("/auth/logout", customer, async (req) => {
+    await logout(db, bearer(req));
+    return { ok: true };
+  });
+
+  app.get("/me", customer, async (req) => overview(db, req.accountId));
+  app.patch("/me", customer, async (req) => updateProfile(db, req.accountId, updateProfileInput.parse(req.body)));
+  app.get("/me/vehicle-classes", customer, async () => (await db.query("SELECT * FROM vehicle_classes ORDER BY code")).rows);
+  app.post("/me/vehicles", customer, async (req, reply) => {
+    // Motorists register plates; tags are issued at the counter, so the app can't set one.
+    const input = registerVehicleInput.parse({ ...(req.body as object), tag_id: undefined });
+    return reply.code(201).send(await registerVehicle(db, req.accountId, input, req.actor));
+  });
+  app.delete("/me/vehicles/:id", customer, async (req) => deactivateVehicle(db, idParam.parse(req.params).id, req.actor, req.accountId));
+  app.get("/me/passages", customer, async (req) => myPassages(db, req.accountId, myPassagesQuery.parse(req.query)));
+  app.get("/me/passages/:id/image", customer, async (req, reply) => {
+    const { id } = idParam.parse(req.params);
+    if (!(await canActOnPassage(db, req.accountId, id))) return reply.code(404).send({ error: "not_found", message: "passage not found" });
+    return sendImage(reply, await getPassageImage(db, id));
+  });
+  app.get("/me/statement", customer, async (req) => buildStatement(db, req.accountId, statementQuery.parse(req.query)));
+  app.post("/me/topups", customer, async (req, reply) => {
+    const key = req.headers["idempotency-key"];
+    const { topup, replayed } = await startTopup(
+      topupDeps,
+      req.accountId,
+      topupInput.parse(req.body),
+      req.actor,
+      typeof key === "string" && key ? key : undefined,
+    );
+    return reply.code(replayed ? 200 : 202).send(topup);
+  });
+  app.get("/me/topups/:id", customer, async (req, reply) => {
+    const t = await getTopup(db, idParam.parse(req.params).id);
+    if (t.account_id !== req.accountId) return reply.code(404).send({ error: "not_found", message: "top-up not found" });
+    return t;
+  });
+  app.get("/me/violations", customer, async (req) => myViolations(db, req.accountId));
+  app.post("/me/violations/:id/pay", customer, async (req) => {
+    const { id } = idParam.parse(req.params);
+    await assertMyViolation(db, req.accountId, id);
+    return settleViolation(db, id, req.accountId, req.actor);
+  });
+  app.get("/me/disputes", customer, async (req) => (await listDisputes(db, { account_id: req.accountId, limit: 100 })).items);
+  app.post("/me/disputes", customer, async (req, reply) => {
+    const d = await raiseDispute(db, raiseDisputeInput.parse(req.body), {
+      actor: req.actor,
+      accountId: req.accountId,
+      windowDays: config.disputeWindowDays,
+    });
+    return reply.code(201).send(d);
+  });
+  app.get("/me/disputes/:id", customer, async (req, reply) => {
+    const d = await getDispute(db, idParam.parse(req.params).id);
+    if (d.account_id !== req.accountId) return reply.code(404).send({ error: "not_found", message: "dispute not found" });
+    // The motorist sees the decision and their own evidence list, not the operator's working.
+    const { history: _history, vehicles: _vehicles, camera: _camera, holder_name: _name, ...visible } = d;
+    return visible;
+  });
+  app.get("/me/notices", customer, async (req) => myNotices(db, req.accountId));
+
   // --- audit ----------------------------------------------------------------
   app.get("/audit", admin, async (req) => {
     const f = z
@@ -265,10 +402,17 @@ export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
   // --- operations dashboard -------------------------------------------------
   // The page and the corridor map are public; the numbers need the admin key,
   // which the page asks for and keeps in localStorage.
-  const dashboardFile = (name: string) => readFileSync(join(dashboardDir(), name));
-  app.get("/dashboard", async (_req, reply) => reply.type("text/html; charset=utf-8").send(dashboardFile("index.html")));
-  app.get("/dashboard/review", async (_req, reply) => reply.type("text/html; charset=utf-8").send(dashboardFile("review.html")));
-  app.get("/dashboard/corridor.json", async (_req, reply) => reply.type("application/json").send(dashboardFile("corridor.json")));
+  const page =
+    (folder: string, name: string, type = "text/html; charset=utf-8") =>
+    async (_req: FastifyRequest, reply: FastifyReply) =>
+      reply.type(type).send(readFileSync(join(assetDir(folder), name)));
+  app.get("/dashboard", page("dashboard", "index.html"));
+  app.get("/dashboard/review", page("dashboard", "review.html"));
+  app.get("/dashboard/disputes", page("dashboard", "disputes.html"));
+  app.get("/dashboard/corridor.json", page("dashboard", "corridor.json", "application/json"));
+  // The motorist app: one page that talks to /auth and /me.
+  app.get("/app", page("customer", "index.html"));
+  app.get("/app/manifest.webmanifest", page("customer", "manifest.webmanifest", "application/manifest+json"));
   app.get("/dashboard/data", admin, async (req) => {
     const { window_minutes } = z
       .object({ window_minutes: z.coerce.number().int().min(5).max(24 * 60).default(60) })
@@ -279,14 +423,19 @@ export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
   return app;
 }
 
-/** Finds the repo's dashboard/ folder whether running from src/ (tsx) or dist/ (node). */
-function dashboardDir(): string {
+/** Finds a static folder of the repo (dashboard/, customer/) whether running from src/ (tsx) or dist/ (node). */
+function assetDir(folder: string): string {
   let dir = dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 6; i++) {
-    if (existsSync(join(dir, "dashboard", "index.html"))) return join(dir, "dashboard");
+    if (existsSync(join(dir, folder, "index.html"))) return join(dir, folder);
     dir = dirname(dir);
   }
-  throw new AppError(404, "not_found", "dashboard files are not installed");
+  throw new AppError(404, "not_found", `${folder} files are not installed`);
+}
+
+function sendImage(reply: FastifyReply, image: { bytes: Buffer; type: string } | null) {
+  if (!image) return reply.code(404).send({ error: "no_image", message: "the camera kept no image of this passage" });
+  return reply.type(image.type).header("cache-control", "private, max-age=3600").send(image.bytes);
 }
 
 function header(req: FastifyRequest, name: string): string | undefined {
@@ -306,5 +455,6 @@ function summarize(r: Awaited<ReturnType<typeof ingestPassage>>) {
     violation_id: r.violation?.id ?? null,
     violation_reason: r.violation?.reason ?? null,
     review_id: r.review_id ?? null,
+    hotlist: r.hotlist ?? null,
   };
 }

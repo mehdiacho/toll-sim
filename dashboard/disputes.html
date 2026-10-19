@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disputes and Enforcement</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #151b23; --line: #263040; --text: #e6edf3; --muted: #8b98a8;
+    --accent: #3fb6a8; --warn: #e3a44a; --bad: #e5604f; --good: #57c27a;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header a { color: var(--muted); text-decoration: none; font-size: 13px; }
+  header a:hover { color: var(--text); }
+  .counts { font: 600 14px var(--mono); color: var(--muted); }
+  .counts b { color: var(--warn); }
+  .tabs { margin-left: auto; display: flex; gap: 6px; }
+  .tabs button { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 6px 12px; font: 600 13px system-ui; cursor: pointer; }
+  .tabs button.on { color: var(--text); border-color: var(--accent); }
+  input, select, textarea { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font: inherit; }
+  textarea { width: 100%; min-height: 70px; resize: vertical; }
+  main { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 16px; padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; min-width: 0; margin-bottom: 16px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .list { list-style: none; margin: 0; padding: 0; max-height: 75vh; overflow-y: auto; }
+  .list li { padding: 9px 6px; border-bottom: 1px solid var(--line); cursor: pointer; border-radius: 4px; }
+  .list li:hover { background: #1b2330; }
+  .list li.cur { background: #1b2a2c; box-shadow: inset 3px 0 0 var(--accent); }
+  .list .r1 { display: flex; justify-content: space-between; gap: 8px; }
+  .list .r2 { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .mono { font-family: var(--mono); }
+  .pill { font: 600 11px system-ui; padding: 1px 7px; border-radius: 10px; border: 1px solid currentColor; white-space: nowrap; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 5px 14px; font-size: 13px; margin: 0; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; }
+  .shot { background: #000; border-radius: 6px; min-height: 90px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .shot img { width: 100%; display: block; }
+  .shot .none { color: var(--muted); padding: 24px; font-size: 13px; }
+  .desc { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin: 8px 0 0; }
+  .ev { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+  .ev a { display: block; width: 130px; text-decoration: none; color: var(--muted); font-size: 12px; }
+  .ev .thumb { height: 90px; background: #000; border: 1px solid var(--line); border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden; color: var(--text); font: 600 13px var(--mono); }
+  .ev img { width: 100%; height: 100%; object-fit: cover; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .hist td:first-child { color: var(--muted); white-space: nowrap; font-family: var(--mono); font-size: 12px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; }
+  button.act { border: 0; border-radius: 6px; padding: 9px 16px; font: 600 14px system-ui; cursor: pointer; }
+  button.act:disabled { opacity: .5; cursor: default; }
+  .ok { background: var(--good); color: #062210; } .fix { background: var(--accent); color: #07211e; } .no { background: transparent; color: var(--bad); border: 1px solid var(--bad) !important; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .done { color: var(--muted); padding: 50px 10px; text-align: center; }
+  .flash { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .flash.on { opacity: 1; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .kpi .v { font: 600 22px var(--mono); } .kpi .l { color: var(--muted); font-size: 12px; }
+  .msg { font-size: 12px; color: var(--muted); max-width: 520px; }
+  #keyform { display: none; }
+  .wide { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Disputes &amp; enforcement</h1>
+  <span class="counts" id="counts">–</span>
+  <a href="/dashboard">← operations dashboard</a>
+  <a href="/dashboard/review">plate review</a>
+  <div class="tabs"><button data-tab="disputes" class="on">Disputes</button><button data-tab="enforcement">Enforcement</button></div>
+</header>
+<form id="keyform" class="panel" style="max-width:420px;margin:20px auto"><h2>Admin key</h2><input id="key" type="password" placeholder="ADMIN_API_KEY"> <button class="act fix">Connect</button></form>
+
+<main id="disputesView">
+  <aside class="panel" style="margin:0">
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <select id="filter"><option value="open">Open (oldest first)</option><option value="upheld">Upheld</option><option value="rejected">Rejected</option><option value="">All</option></select>
+    </div>
+    <ul class="list" id="list"></ul>
+  </aside>
+  <section id="detail"><div class="panel"><div class="done">loading…</div></div></section>
+</main>
+
+<main id="enforcementView" style="display:none;grid-template-columns:1fr">
+  <div>
+    <div class="kpis" id="kpis"></div>
+    <div class="panel">
+      <h2>Run the ladder</h2>
+      <div class="actions" style="margin-top:0">
+        <label>judge as of <input id="ffwd" type="number" min="0" max="365" value="0" style="width:70px"> days from now</label>
+        <button class="act fix" id="run">Run enforcement</button>
+        <span id="runout" class="mono" style="color:var(--muted)"></span>
+      </div>
+      <div class="hint">Grace ends → notice + admin fee → 14 days → final notice + late fee → 14 days → referral (hotlist). Violations under an open dispute are skipped. Fast-forwarding is for the simulation; the server's own schedule always uses the real clock.</div>
+    </div>
+    <div class="panel"><h2>Hotlist: referred plates</h2><div id="hotlist"></div></div>
+    <div class="panel"><h2>Outbox: latest notices (not really sent)</h2><div id="outbox"></div></div>
+  </div>
+</main>
+<div class="flash" id="flash"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+                set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
+const params = new URLSearchParams(location.search);
+if (params.get("key")) { store.set("tollAdminKey", params.get("key")); history.replaceState(null, "", location.pathname + location.hash); }
+let key = store.get("tollAdminKey");
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pula = (t) => t == null ? "–" : "P " + (Number(t) / 100).toLocaleString("en-BW", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const when = (d) => d ? new Date(d).toLocaleString("en-GB", { timeZone: "Africa/Gaborone", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "–";
+const ago = (d) => { const h = (Date.now() - new Date(d)) / 36e5; return h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : h < 48 ? `${Math.round(h)} h` : `${Math.round(h / 24)} d`; };
+const ref = (id) => String(id).slice(0, 8).toUpperCase();
+const REASON = { not_my_vehicle: "Not my vehicle", plate_misread: "Plate misread", wrong_class: "Wrong class", already_paid: "Already paid", vehicle_stolen: "Vehicle stolen", other: "Other" };
+const STATUS_COLOR = { open: "var(--warn)", upheld: "var(--good)", rejected: "var(--bad)" };
+const STAGE_COLOR = { grace: "var(--muted)", notice: "var(--warn)", final_notice: "var(--bad)", referred: "var(--bad)" };
+
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, { ...opts, headers: { authorization: "Bearer " + key, ...(opts.body ? { "content-type": "application/json" } : {}) } });
+  if (res.status === 401 || res.status === 403) { key = null; store.set("tollAdminKey", null); showKey(); throw new Error("unauthorized"); }
+  return res;
+};
+const json = async (path, opts) => { const r = await api(path, opts); const b = await r.json(); if (!r.ok) throw Object.assign(new Error(b.message || "request failed"), { body: b }); return b; };
+function flash(msg) { const f = $("flash"); f.textContent = msg; f.classList.add("on"); clearTimeout(f.t); f.t = setTimeout(() => f.classList.remove("on"), 2400); }
+function showKey() { $("keyform").style.display = "block"; $("disputesView").style.display = "none"; $("enforcementView").style.display = "none"; }
+
+let items = [], current = null, classes = [], blobs = [];
+
+// --- disputes --------------------------------------------------------------
+async function loadList() {
+  const status = $("filter").value;
+  const data = await json(`/disputes?limit=200${status ? "&status=" + status : ""}`);
+  items = data.items;
+  $("counts").innerHTML = `<b>${data.open}</b> open · ${data.upheld} upheld · ${data.rejected} rejected`;
+  $("list").innerHTML = items.length ? items.map((d) => `<li data-id="${d.id}" class="${current?.id === d.id ? "cur" : ""}">
+    <div class="r1"><span>${esc(REASON[d.reason] ?? d.reason)}</span><span class="pill" style="color:${STATUS_COLOR[d.status]}">${d.status}</span></div>
+    <div class="r2"><span class="mono">${esc(d.plate_read ?? "–")}</span> · ${esc(d.gantry_id)} · ${esc(d.holder_name ?? "no account")} · ${d.status === "open" ? "waiting " + ago(d.created_at) : when(d.resolved_at)}${d.evidence_count ? ` · ${d.evidence_count} file${d.evidence_count > 1 ? "s" : ""}` : ""}</div></li>`).join("")
+    : `<li style="cursor:default;color:var(--muted)">Nothing here.</li>`;
+  if (!current && items[0]) show(items[0].id);
+  if (!items.length && !current) $("detail").innerHTML = `<div class="panel"><div class="done">No ${status || ""} disputes. Motorists raise them from the customer app (/app); operators can log one with POST /disputes.</div></div>`;
+}
+
+async function show(id) {
+  blobs.forEach(URL.revokeObjectURL); blobs = [];
+  const d = await json(`/disputes/${id}`);
+  current = d;
+  for (const li of document.querySelectorAll("#list li")) li.classList.toggle("cur", li.dataset.id === id);
+  const p = d.passage, v = d.violation, cam = d.camera;
+  const regd = d.vehicles.find((x) => x.plate === p.plate_read);
+  $("detail").innerHTML = `
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0">Dispute ${ref(d.id)} · ${esc(REASON[d.reason] ?? d.reason)}</h2>
+        <span class="pill" style="color:${STATUS_COLOR[d.status]}">${d.status}</span></div>
+      <div class="hint" style="margin-top:4px">raised ${when(d.created_at)} by <span class="mono">${esc(d.raised_by)}</span>${d.holder_name ? " for " + esc(d.holder_name) : ""}</div>
+      <div class="desc">${esc(d.description)}</div>
+      ${d.evidence.length ? `<div class="ev">${d.evidence.map((e) => `<a href="#" data-ev="${e.id}" data-type="${esc(e.content_type)}" title="${esc(e.filename)}">
+        <div class="thumb" id="ev-${e.id}">${e.content_type === "application/pdf" ? "PDF" : "…"}</div>${esc(e.filename)} · ${(e.bytes / 1024).toFixed(0)} KB</a>`).join("")}</div>` : `<div class="hint">No evidence attached.</div>`}
+    </div>
+    <div class="grid2">
+      <div class="panel" style="margin:0">
+        <h2>Passage</h2>
+        <dl class="kv">
+          <dt>gantry</dt><dd>${esc(p.gantry_id)}</dd><dt>passed</dt><dd>${when(p.passed_at)}</dd>
+          <dt>plate read</dt><dd class="mono">${esc(p.plate_read ?? "–")}${p.read_confidence != null ? ` (${(p.read_confidence * 100).toFixed(1)}%)` : ""}</dd>
+          <dt>matched by</dt><dd>${esc(p.match_method)}${p.tag_id ? ` · tag <span class="mono">${esc(p.tag_id)}</span>` : ""}</dd>
+          <dt>class</dt><dd>charged ${esc(p.charged_class ?? "–")} · detected ${esc(p.detected_class ?? "–")}${p.class_mismatch ? ` <span class="pill" style="color:var(--warn)">mismatch</span>` : ""}</dd>
+          <dt>toll</dt><dd>${pula(p.amount_thebe)} · <b>${esc(p.status)}</b></dd>
+          <dt>paid</dt><dd>${Object.keys(d.paid).length ? Object.entries(d.paid).map(([k, t]) => `${k} ${pula(t)}`).join(" · ") : "nothing"}</dd>
+          ${v ? `<dt>violation</dt><dd>${esc(v.reason)} · ${esc(v.status)} · <span style="color:${STAGE_COLOR[v.stage]}">${esc(v.stage)}</span><br>owed ${pula(v.amount_due_thebe + v.penalty_thebe)} (fees ${pula(v.penalty_thebe)}) · due ${when(v.due_by)}</dd>` : ""}
+          ${cam ? `<dt>review</dt><dd>${esc(cam.decision ?? "open")}${cam.reviewer ? " by " + esc(cam.reviewer) : ""}${cam.resolved_plate ? ` → <span class="mono">${esc(cam.resolved_plate)}</span>` : ""}</dd>` : ""}
+        </dl>
+      </div>
+      <div class="panel" style="margin:0">
+        <h2>Camera</h2>
+        <div class="shot" id="shot"><div class="none">${cam?.has_image ? "loading…" : "No image kept: the read was confident enough that it never went to review."}</div></div>
+        <h2 style="margin-top:14px">Account's vehicles</h2>
+        ${d.vehicles.length ? `<table><tr><th>plate</th><th>class</th><th>tag</th><th></th></tr>${d.vehicles.map((x) => `<tr><td class="mono">${esc(x.plate)}</td><td>${esc(x.vehicle_class)}</td><td class="mono">${esc(x.tag_id ?? "–")}</td><td>${x.active ? "" : "removed"}</td></tr>`).join("")}</table>
+          <div class="hint">${regd ? `The read plate is registered to this account as class ${esc(regd.vehicle_class)}.` : "The read plate is <b>not</b> one of this account's vehicles."}</div>` : `<div class="hint">No account, or no vehicles.</div>`}
+      </div>
+    </div>
+    ${d.status === "open" ? `<div class="panel" style="margin-top:16px">
+      <h2>Decision</h2>
+      <textarea id="note" placeholder="Reason the motorist will see (required)" maxlength="1000"></textarea>
+      <div class="actions">
+        <button class="act ok" id="uphold">Uphold</button>
+        <label>or re-rate as class <select id="cls"><option value="">–</option>${classes.map((c) => `<option value="${esc(c.code)}">${esc(c.code)} · ${esc(c.name)}</option>`).join("")}</select></label>
+        <button class="act fix" id="rerate">Uphold &amp; re-rate</button>
+        <button class="act no" id="reject">Reject</button>
+      </div>
+      <div class="hint">Uphold: an unpaid violation is waived with its fees; a paid passage is refunded in full to whoever paid. Re-rate: charge the right class (never more than before) and refund the difference. Reject: the charge stands, and the days the dispute was open are added back to the time to pay.</div>
+    </div>` : `<div class="panel" style="margin-top:16px"><h2>Decision</h2>
+      <dl class="kv"><dt>outcome</dt><dd><b style="color:${STATUS_COLOR[d.status]}">${d.status}</b>${d.corrected_class ? " · re-rated to class " + esc(d.corrected_class) : ""}${d.refund_thebe ? " · refunded " + pula(d.refund_thebe) : ""}</dd>
+      <dt>by</dt><dd class="mono">${esc(d.resolved_by)} · ${when(d.resolved_at)}</dd><dt>note</dt><dd>${esc(d.resolution_note)}</dd></dl></div>`}
+    <div class="panel" style="margin-top:16px"><h2>Audit trail</h2>
+      <table class="hist"><tr><th>#</th><th>when</th><th>actor</th><th>action</th><th>details</th></tr>${d.history.map((a) => `<tr><td>${a.seq}</td><td>${when(a.at)}</td>
+        <td class="mono">${esc(a.actor)}</td><td>${esc(a.action)}</td><td class="msg mono">${esc(JSON.stringify(a.data))}</td></tr>`).join("")}</table></div>`;
+
+  if (cam?.has_image) loadBlob(`/passages/${p.id}/image`).then((u) => { if (current?.id === id && u) $("shot").innerHTML = `<img alt="gantry plate crop" src="${u}">`; });
+  for (const a of document.querySelectorAll("[data-ev]")) {
+    const url = `/disputes/${d.id}/evidence/${a.dataset.ev}`;
+    if (a.dataset.type.startsWith("image/")) loadBlob(url).then((u) => { if (u) $("ev-" + a.dataset.ev).innerHTML = `<img alt="" src="${u}">`; });
+    a.onclick = async (e) => { e.preventDefault(); const u = await loadBlob(url); if (u) window.open(u, "_blank", "noopener"); };
+  }
+  if (d.status === "open") {
+    $("uphold").onclick = () => decide("upheld");
+    $("rerate").onclick = () => { if (!$("cls").value) return flash("pick the class to re-rate to"); decide("upheld", $("cls").value); };
+    $("reject").onclick = () => decide("rejected");
+  }
+}
+
+async function loadBlob(url) {
+  try { const r = await api(url); if (!r.ok) return null; const u = URL.createObjectURL(await r.blob()); blobs.push(u); return u; } catch { return null; }
+}
+
+async function decide(decision, corrected_class) {
+  const note = $("note").value.trim();
+  if (note.length < 5) { flash("write a reason the motorist will see (5+ characters)"); $("note").focus(); return; }
+  document.querySelectorAll("button.act").forEach((b) => (b.disabled = true));
+  try {
+    const out = await json(`/disputes/${current.id}/resolve`, { method: "POST", body: JSON.stringify({ decision, note, ...(corrected_class ? { corrected_class } : {}) }) });
+    flash(`${decision}${out.refund_thebe ? " · refunded " + pula(out.refund_thebe) : ""} · passage ${out.passage.status}`);
+    const i = items.findIndex((x) => x.id === current.id);
+    current = null;
+    await loadList();
+    const next = $("filter").value === "open" ? items[Math.min(i, items.length - 1)] : items.find((x) => x.id === out.dispute.id);
+    if (next) show(next.id); else if (!items.length) loadList();
+  } catch (e) {
+    flash(e.message);
+    document.querySelectorAll("button.act").forEach((b) => (b.disabled = false));
+  }
+}
+
+// --- enforcement -----------------------------------------------------------
+async function loadEnforcement() {
+  const [snap, hot, out] = await Promise.all([json("/dashboard/data"), json("/enforcement/hotlist"), json("/admin/outbox?limit=40")]);
+  const e = snap.enforcement, d = snap.disputes;
+  $("kpis").innerHTML = [
+    [e.grace, "in grace"], [e.notice, "notice sent"], [e.final_notice, "final notice"], [e.referred, "referred"],
+    [e.hotlist_plates, "hotlist plates"], [pula(e.owed_thebe), "owed (open)"], [pula(e.penalties_thebe), "fees (open)"], [d.open, "open disputes"],
+  ].map(([v, l]) => `<div class="kpi"><div class="v">${esc(v)}</div><div class="l">${l}</div></div>`).join("");
+  $("hotlist").innerHTML = hot.length ? `<table><tr><th>plate</th><th class="n">violations</th><th class="n">owed</th><th>oldest passage</th><th>referred</th><th>last seen</th><th></th></tr>
+    ${hot.map((h) => `<tr><td class="mono">${esc(h.plate)}</td><td class="n">${h.violations}</td><td class="n">${pula(h.owed_thebe)}</td><td>${when(h.oldest_passage)}</td>
+      <td>${when(h.referred_since)}</td><td>${when(h.last_seen)}</td><td>${h.unregistered ? `<span class="pill" style="color:var(--warn)">unregistered</span>` : ""}</td></tr>`).join("")}</table>`
+    : `<div class="hint">No plates are referred.</div>`;
+  $("outbox").innerHTML = out.length ? `<table><tr><th>when</th><th>channel</th><th>to</th><th>kind</th><th>message</th></tr>${out.map((m) => `<tr><td>${when(m.created_at)}</td>
+    <td>${esc(m.channel)}</td><td class="mono">${esc(m.channel === "sms" ? mask(m.recipient) : m.recipient)}</td><td>${esc(m.kind)}</td><td class="msg">${esc(m.kind === "login_code" ? "(sign-in code hidden)" : m.body)}</td></tr>`).join("")}</table>`
+    : `<div class="hint">Nothing sent yet.</div>`;
+}
+const mask = (p) => String(p).replace(/^(\d{5})\d+(\d{3})$/, "$1•••$2");
+
+$("run").onclick = async () => {
+  $("run").disabled = true;
+  try {
+    const at = new Date(Date.now() + Number($("ffwd").value || 0) * 864e5).toISOString();
+    const r = await json("/admin/run-enforcement", { method: "POST", body: JSON.stringify({ at }) });
+    $("runout").textContent = `checked ${r.checked} · notice ${r.escalated.notice} · final ${r.escalated.final_notice} · referred ${r.escalated.referred} · ${r.notices} messages · ${r.skipped_disputed} skipped (disputed)`;
+    loadEnforcement();
+  } catch (e) { flash(e.message); }
+  $("run").disabled = false;
+};
+
+// --- shell -----------------------------------------------------------------
+let tab = location.hash === "#enforcement" ? "enforcement" : "disputes";
+function setTab(t) {
+  tab = t; history.replaceState(null, "", t === "enforcement" ? "#enforcement" : location.pathname + location.search);
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
+  $("disputesView").style.display = t === "disputes" ? "" : "none";
+  $("enforcementView").style.display = t === "enforcement" ? "grid" : "none";
+  refresh();
+}
+async function refresh() {
+  if (!key) return showKey();
+  try {
+    if (!classes.length) classes = await json("/vehicle-classes");
+    if (tab === "disputes") await loadList(); else await loadEnforcement();
+  } catch (e) { if (e.message !== "unauthorized") flash(e.message); }
+}
+document.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));
+$("filter").onchange = () => { current = null; loadList(); };
+$("list").addEventListener("click", (e) => { const li = e.target.closest("li[data-id]"); if (li) show(li.dataset.id); });
+$("keyform").addEventListener("submit", (e) => { e.preventDefault(); key = $("key").value.trim(); store.set("tollAdminKey", key); $("keyform").style.display = "none"; setTab(tab); });
+setTab(tab);
+setInterval(() => { if (key && !document.activeElement?.matches("textarea, select, input")) tab === "disputes" ? loadList() : loadEnforcement(); }, 10000);
+</script>
+</body>
+</html>

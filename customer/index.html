@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f6b5f">
+<title>A1 Toll</title>
+<link rel="manifest" href="/app/manifest.webmanifest">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f6b5f'/%3E%3Cpath d='M9 23 14 9h4l5 14h-3.6l-1-3h-4.8l-1 3zm5.3-6h3.4L16 11.8z' fill='white'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f4f6f5; --card: #ffffff; --line: #e2e7e5; --text: #142420; --muted: #5d6e69;
+    --brand: #0f6b5f; --brand-ink: #ffffff; --brand-soft: #e2f1ee;
+    --warn: #a35d00; --warn-soft: #fff1dc; --bad: #b3261e; --bad-soft: #fde7e5; --good: #1d7a3e; --good-soft: #e3f4e8;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --radius: 14px; --shadow: 0 1px 2px rgb(0 0 0 / .05), 0 2px 8px rgb(0 0 0 / .04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1513; --card: #17201e; --line: #26332f; --text: #e5eeeb; --muted: #93a49f;
+      --brand: #3fb6a8; --brand-ink: #062320; --brand-soft: #173a35;
+      --warn: #f0b45a; --warn-soft: #3a2c14; --bad: #f08a80; --bad-soft: #3d1d1a; --good: #6fd08f; --good-soft: #163221;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; min-height: 100dvh; }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 0 16px calc(84px + env(safe-area-inset-bottom)); }
+  header.top { display: flex; align-items: center; gap: 10px; padding: calc(14px + env(safe-area-inset-top)) 0 10px; }
+  header.top h1 { font-size: 20px; margin: 0; font-weight: 650; flex: 1; }
+  header.top .back { border: 0; background: none; color: var(--brand); font: inherit; font-weight: 600; padding: 6px 0; cursor: pointer; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; box-shadow: var(--shadow); }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  .balance { background: var(--brand); color: var(--brand-ink); border: 0; }
+  .balance .label { opacity: .85; font-size: 13px; }
+  .balance .amount { font-size: 38px; font-weight: 700; letter-spacing: -.5px; margin: 2px 0 14px; font-variant-numeric: tabular-nums; }
+  .balance .row { display: flex; gap: 10px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 12px; padding: 12px 16px;
+         font: 600 15px system-ui, sans-serif; cursor: pointer; background: var(--brand); color: var(--brand-ink); min-height: 46px; text-decoration: none; }
+  .btn.block { width: 100%; }
+  .btn.ghost { background: transparent; color: var(--brand); border: 1.5px solid var(--brand); }
+  .btn.light { background: var(--brand-ink); color: var(--brand); }
+  .btn.danger { background: transparent; color: var(--bad); border: 1.5px solid var(--bad); }
+  .btn.small { min-height: 36px; padding: 7px 12px; font-size: 14px; border-radius: 10px; }
+  .btn:disabled { opacity: .55; cursor: default; }
+  .alert { display: flex; gap: 12px; align-items: center; border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
+  .alert.bad { background: var(--bad-soft); color: var(--bad); }
+  .alert.warn { background: var(--warn-soft); color: var(--warn); }
+  .alert.good { background: var(--good-soft); color: var(--good); }
+  .alert .grow { flex: 1; }
+  .alert b { display: block; font-size: 16px; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  .stats .card { margin: 0; }
+  .stat-n { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-l { color: var(--muted); font-size: 13px; }
+  .list { list-style: none; margin: 0; padding: 0; }
+  .list li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .list li:first-child { border-top: 0; padding-top: 2px; }
+  .list li.tap { cursor: pointer; }
+  .list .main { flex: 1; min-width: 0; }
+  .list .t1 { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .list .t2 { color: var(--muted); font-size: 13px; }
+  .list .amt { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .plate { font: 600 13px var(--mono); letter-spacing: 1px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 2px 8px; margin-top: 3px; }
+  .b-good { background: var(--good-soft); color: var(--good); } .b-bad { background: var(--bad-soft); color: var(--bad); }
+  .b-warn { background: var(--warn-soft); color: var(--warn); } .b-mute { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+  .empty { color: var(--muted); text-align: center; padding: 26px 8px; }
+  label.f { display: block; font-size: 13px; color: var(--muted); font-weight: 600; margin: 14px 0 6px; }
+  input.f, select.f, textarea.f { width: 100%; border: 1.5px solid var(--line); background: var(--card); color: var(--text); border-radius: 12px; padding: 12px 14px; font: inherit; font-size: 16px; }
+  input.f:focus, select.f:focus, textarea.f:focus { outline: none; border-color: var(--brand); }
+  textarea.f { min-height: 110px; resize: vertical; }
+  .code { font: 600 28px var(--mono); letter-spacing: 10px; text-align: center; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { border: 1.5px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 8px 14px; font: 600 14px system-ui; cursor: pointer; }
+  .chip.on { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .err { color: var(--bad); font-size: 14px; margin-top: 10px; min-height: 1em; }
+  .dev { background: var(--warn-soft); color: var(--warn); border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-top: 12px; }
+  .dev b { font-family: var(--mono); letter-spacing: 2px; font-size: 15px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 14px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  .shot { background: #000; border-radius: 10px; overflow: hidden; margin: 6px 0 12px; }
+  .shot img { display: block; width: 100%; }
+  .menu a { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-top: 1px solid var(--line); color: var(--text); text-decoration: none; font-weight: 500; }
+  .menu a:first-child { border-top: 0; padding-top: 2px; }
+  .menu a span { color: var(--muted); }
+  .files { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
+             display: flex; justify-content: center; padding-bottom: env(safe-area-inset-bottom); z-index: 5; }
+  nav.tabs[hidden] { display: none; }
+  nav.tabs .in { display: flex; width: 100%; max-width: 520px; }
+  nav.tabs a { flex: 1; text-align: center; padding: 9px 0 10px; color: var(--muted); text-decoration: none; font-size: 12px; font-weight: 600; position: relative; }
+  nav.tabs a svg { display: block; margin: 0 auto 2px; width: 24px; height: 24px; }
+  nav.tabs a.on { color: var(--brand); }
+  nav.tabs .dot { position: absolute; top: 6px; left: calc(50% + 7px); background: var(--bad); color: #fff; border-radius: 999px; font-size: 10px; padding: 0 5px; line-height: 16px; }
+  .sheet-bg { position: fixed; inset: 0; background: rgb(0 0 0 / .45); z-index: 10; display: flex; align-items: flex-end; justify-content: center; }
+  .sheet { background: var(--card); width: 100%; max-width: 520px; border-radius: 20px 20px 0 0; padding: 10px 16px calc(20px + env(safe-area-inset-bottom)); max-height: 92dvh; overflow-y: auto; }
+  .sheet .grab { width: 40px; height: 4px; border-radius: 4px; background: var(--line); margin: 0 auto 12px; }
+  .sheet h3 { margin: 0 0 4px; font-size: 19px; }
+  .spinner { width: 42px; height: 42px; border: 4px solid var(--brand-soft); border-top-color: var(--brand); border-radius: 50%; animation: spin 0.9s linear infinite; margin: 20px auto; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .center { text-align: center; }
+  .toast { position: fixed; left: 50%; bottom: calc(90px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--text); color: var(--bg);
+           border-radius: 10px; padding: 10px 16px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 20; max-width: calc(100% - 32px); }
+  .toast.on { opacity: 1; }
+  .login { padding-top: 10dvh; }
+  .logo { width: 56px; height: 56px; border-radius: 16px; background: var(--brand); color: var(--brand-ink); display: flex; align-items: center; justify-content: center; font: 800 26px system-ui; margin-bottom: 18px; }
+  .notice .t2 { white-space: normal; }
+  .notice .body { font-size: 14px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="view"></div>
+<nav class="tabs" id="tabs" hidden><div class="in">
+  <a href="#/" data-tab="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Home</a>
+  <a href="#/trips" data-tab="trips"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20 9 4m6 0 5 16M12 6v2m0 4v2m0 4v2"/></svg>Trips</a>
+  <a href="#/fines" data-tab="fines"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 20h20L12 3zm0 6v5m0 3v.5"/></svg>To pay<span class="dot" id="finesDot" hidden></span></a>
+  <a href="#/more" data-tab="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>More</a>
+</div></nav>
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const view = $("#view");
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} },
+};
+let token = store.get("a1TollSession");
+let me = null; // last /me overview
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const pula = (t) => "P " + (Number(t || 0) / 100).toLocaleString("en-BW", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const when = (d) => new Date(d).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Africa/Gaborone" });
+const day = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Gaborone" });
+const ref = (id) => String(id).slice(0, 8).toUpperCase();
+const PROVIDERS = [["orange_money", "Orange Money"], ["myzaka", "MyZaka"], ["smega", "Smega"]];
+const REASONS = [
+  ["not_my_vehicle", "That wasn't my vehicle"], ["plate_misread", "The camera misread the plate"], ["wrong_class", "I was charged the wrong vehicle class"],
+  ["already_paid", "I already paid for this"], ["vehicle_stolen", "My vehicle was stolen"], ["other", "Something else"],
+];
+const STAGE = { grace: ["Due", "b-warn"], notice: ["Notice sent", "b-warn"], final_notice: ["Final notice", "b-bad"], referred: ["Referred", "b-bad"] };
+
+function toast(msg) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("on");
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2600);
+}
+
+async function api(method, path, body, headers = {}) {
+  const res = await fetch(path, {
+    method,
+    headers: { ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(token ? { authorization: "Bearer " + token } : {}), ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (res.status === 401 && token && !path.startsWith("/auth/")) { signOut(true); throw new Error("Please sign in again."); }
+  if (!res.ok) {
+    const e = new Error(data?.issues?.[0]?.message ? friendlyIssue(data.issues[0]) : data?.message || "Something went wrong");
+    e.code = data?.error; throw e;
+  }
+  return data;
+}
+const friendlyIssue = (i) => (i.path?.length ? i.path.join(".") + ": " : "") + i.message;
+
+function signOut(expired) {
+  if (token && !expired) api("POST", "/auth/logout").catch(() => {});
+  token = null; me = null; store.set("a1TollSession", null);
+  location.hash = "#/login";
+  if (expired) toast("Your session ended. Please sign in again.");
+}
+
+// --- routing ---------------------------------------------------------------
+const routes = {
+  "login": login, "": home, "trips": trips, "trip": trip, "fines": fines, "more": more, "vehicles": vehicles,
+  "statement": statement, "disputes": disputes, "dispute": dispute, "notices": notices, "profile": profile,
+};
+async function route() {
+  const [name, arg] = location.hash.replace(/^#\/?/, "").split("/");
+  if (!token && name !== "login") { location.hash = "#/login"; return; }
+  if (token && name === "login") { location.hash = "#/"; return; }
+  const tab = { "": "home", trips: "trips", trip: "trips", fines: "fines" }[name] ?? "more";
+  $("#tabs").hidden = !token;
+  document.querySelectorAll("nav.tabs a").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
+  closeSheet();
+  window.scrollTo(0, 0);
+  try { await (routes[name] || home)(arg); }
+  catch (e) { if (token) view.innerHTML = page("Error", `<div class="card"><p>${esc(e.message)}</p><button class="btn" onclick="route()">Try again</button></div>`); }
+}
+addEventListener("hashchange", route);
+
+const page = (title, body, back) =>
+  `<header class="top">${back ? `<button class="back" onclick="history.length > 1 ? history.back() : (location.hash='${back}')">‹ Back</button>` : ""}<h1>${esc(title)}</h1></header>${body}`;
+
+function updateDot(o) {
+  const dot = $("#finesDot");
+  dot.hidden = !o?.outstanding?.violations;
+  dot.textContent = o?.outstanding?.violations || "";
+}
+
+// --- sign in ---------------------------------------------------------------
+function login() {
+  let phone = "", code = "";
+  const stepPhone = () => {
+    view.innerHTML = `<div class="login"><div class="logo">A1</div>
+      <h1 style="margin:0 0 6px;font-size:26px">Pay A1 tolls without stopping</h1>
+      <p style="color:var(--muted);margin:0 0 20px">Sign in or create an account with your mobile number. We'll text you a code.</p>
+      <form id="f"><label class="f" for="ph">Mobile number</label>
+      <input class="f" id="ph" type="tel" inputmode="tel" autocomplete="tel" placeholder="71 234 567" required value="${esc(phone)}">
+      <div class="err" id="err"></div><button class="btn block" id="go">Send code</button></form></div>`;
+    $("#ph").focus();
+    $("#f").onsubmit = async (ev) => {
+      ev.preventDefault(); $("#go").disabled = true; $("#err").textContent = "";
+      phone = $("#ph").value.trim();
+      try { const r = await api("POST", "/auth/code", { phone }); stepCode(r); }
+      catch (e) { $("#err").textContent = e.message; $("#go").disabled = false; }
+    };
+  };
+  const stepCode = (sent) => {
+    view.innerHTML = `<div class="login"><div class="logo">A1</div>
+      <h1 style="margin:0 0 6px;font-size:24px">Enter your code</h1>
+      <p style="color:var(--muted);margin:0 0 6px">We sent a 6-digit code to ${esc(sent.phone)}. It expires in 5 minutes.</p>
+      ${sent.dev_code ? `<div class="dev">Demo mode: no SMS is really sent. Your code is <b>${esc(sent.dev_code)}</b></div>` : ""}
+      <form id="f"><input class="f code" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\\d{6}" required style="margin-top:16px">
+      <div class="err" id="err"></div><button class="btn block" id="go">Continue</button>
+      <button type="button" class="btn ghost block" style="margin-top:10px" id="other">Use a different number</button></form></div>`;
+    $("#code").focus();
+    $("#other").onclick = stepPhone;
+    $("#f").onsubmit = async (ev) => {
+      ev.preventDefault(); $("#go").disabled = true; $("#err").textContent = "";
+      code = $("#code").value.trim();
+      try {
+        const r = await api("POST", "/auth/verify", { phone, code });
+        if (r.needs_signup) stepName(); else signedIn(r);
+      } catch (e) { $("#err").textContent = e.message; $("#go").disabled = false; }
+    };
+  };
+  const stepName = () => {
+    view.innerHTML = `<div class="login"><div class="logo">A1</div>
+      <h1 style="margin:0 0 6px;font-size:24px">Welcome! What's your name?</h1>
+      <p style="color:var(--muted);margin:0">This number doesn't have an account yet. We'll create one for you.</p>
+      <form id="f"><label class="f" for="nm">Full name</label><input class="f" id="nm" autocomplete="name" required minlength="2">
+      <div class="err" id="err"></div><button class="btn block" id="go">Create account</button></form></div>`;
+    $("#nm").focus();
+    $("#f").onsubmit = async (ev) => {
+      ev.preventDefault(); $("#go").disabled = true;
+      try { signedIn(await api("POST", "/auth/verify", { phone, code, holder_name: $("#nm").value.trim() })); }
+      catch (e) { $("#err").textContent = e.message; $("#go").disabled = false; }
+    };
+  };
+  const signedIn = (r) => {
+    token = r.token; store.set("a1TollSession", token);
+    location.hash = r.created ? "#/vehicles" : "#/";
+    if (r.created) toast("Account created. Add your vehicle to get started.");
+  };
+  stepPhone();
+}
+
+// --- home ------------------------------------------------------------------
+async function home() {
+  const [o, recent] = await Promise.all([api("GET", "/me"), api("GET", "/me/passages?limit=4")]);
+  me = o; updateDot(o);
+  const first = o.account.holder_name.split(" ")[0];
+  view.innerHTML = page(`Dumela, ${first}`, `
+    <div class="card balance"><div class="label">Balance</div><div class="amount">${pula(o.account.balance_thebe)}</div>
+      <div class="row"><button class="btn light" style="flex:1" id="top">Top up</button><a class="btn light" style="flex:1" href="#/statement">Statement</a></div></div>
+    ${o.outstanding.violations ? `<a class="alert bad" href="#/fines" style="text-decoration:none"><div class="grow"><b>${pula(o.outstanding.owed_thebe)} to pay</b>
+      ${o.outstanding.violations} unpaid toll${o.outstanding.violations > 1 ? "s" : ""}. Pay now to avoid extra fees.</div><span>›</span></a>` : ""}
+    ${o.open_disputes ? `<a class="alert warn" href="#/disputes" style="text-decoration:none"><div class="grow"><b>${o.open_disputes} dispute${o.open_disputes > 1 ? "s" : ""} in progress</b>We'll let you know the outcome.</div><span>›</span></a>` : ""}
+    ${o.account.status !== "active" ? `<div class="alert warn"><div class="grow"><b>Account ${esc(o.account.status)}</b>Passages are not charged to a ${esc(o.account.status)} account. Contact support.</div></div>` : ""}
+    <div class="stats">
+      <div class="card"><div class="stat-n">${o.this_month.tolls}</div><div class="stat-l">tolls this month</div></div>
+      <div class="card"><div class="stat-n">${pula(o.this_month.spent_thebe)}</div><div class="stat-l">spent this month</div></div>
+    </div>
+    <div class="card"><h2>Your vehicles</h2>${o.vehicles.length ? `<div class="chips">${o.vehicles.map((v) => `<span class="plate">${esc(v.plate)}</span>`).join("")}</div>`
+      : `<p style="margin:0 0 10px">Add a vehicle so tolls are paid from your balance instead of becoming fines.</p><a class="btn small" href="#/vehicles">Add a vehicle</a>`}</div>
+    <div class="card"><h2>Recent trips</h2>${tripList(recent)}${recent.length ? `<a class="btn ghost block small" style="margin-top:8px" href="#/trips">All trips</a>` : ""}</div>`);
+  $("#top").onclick = () => topupSheet();
+}
+
+// --- trips -----------------------------------------------------------------
+function tripBadge(p) {
+  if (p.dispute_status === "open") return `<span class="badge b-warn">Disputed</span>`;
+  if (p.status === "charged") return `<span class="badge b-good">Paid</span>`;
+  if (p.status === "refunded") return `<span class="badge b-mute">Refunded</span>`;
+  if (p.status === "waived") return `<span class="badge b-mute">Cancelled</span>`;
+  if (p.status === "review") return `<span class="badge b-mute">Being checked</span>`;
+  if (p.violation_status === "settled") return `<span class="badge b-good">Paid</span>`;
+  return `<span class="badge b-bad">Unpaid</span>`;
+}
+const tripAmount = (p) => (p.status === "unpaid" && p.violation_status === "open" ? p.owed_thebe : p.amount_thebe);
+const tripList = (rows) => rows.length
+  ? `<ul class="list">${rows.map((p) => `<li class="tap" onclick="location.hash='#/trip/${p.id}'"><div class="main">
+      <div class="t1">${esc(p.gantry_name)} gantry</div><div class="t2">${when(p.passed_at)} · <span class="plate">${esc(p.plate_read ?? "no plate")}</span></div></div>
+      <div class="amt">${p.amount_thebe == null ? "–" : pula(tripAmount(p))}<br>${tripBadge(p)}</div></li>`).join("")}</ul>`
+  : `<div class="empty">No trips yet. Passages through A1 gantries will show up here.</div>`;
+
+let tripsCache = [];
+async function trips() {
+  tripsCache = await api("GET", "/me/passages?limit=100");
+  view.innerHTML = page("Trips", `<div class="card">${tripList(tripsCache)}</div>`);
+}
+
+async function trip(id) {
+  const rows = tripsCache.find((p) => p.id === id) ? tripsCache : await api("GET", "/me/passages?limit=200");
+  const p = rows.find((x) => x.id === id);
+  if (!p) throw new Error("Trip not found.");
+  const canDispute = ["charged", "unpaid"].includes(p.status) && p.dispute_status !== "open" && p.dispute_status !== "upheld";
+  view.innerHTML = page("Trip", `
+    <div class="card"><h2>${esc(p.gantry_name)} gantry (${esc(p.gantry_id)})</h2>
+      <dl class="kv"><dt>When</dt><dd>${when(p.passed_at)}</dd><dt>Plate read</dt><dd><span class="plate">${esc(p.plate_read ?? "none")}</span></dd>
+      <dt>Charged as</dt><dd>Class ${esc(p.charged_class ?? "–")}</dd><dt>Toll</dt><dd>${p.amount_thebe == null ? "–" : pula(p.amount_thebe)}</dd>
+      <dt>Status</dt><dd>${tripBadge(p)}</dd>
+      ${p.violation_id && p.violation_status === "open" ? `<dt>Now owed</dt><dd><b>${pula(p.owed_thebe)}</b></dd><dt>Pay by</dt><dd>${day(p.due_by)}</dd>` : ""}</dl></div>
+    ${p.has_image ? `<div class="card"><h2>Camera image</h2><div class="shot"><img id="img" alt="Plate image from the gantry camera"></div></div>` : ""}
+    ${p.violation_id && p.violation_status === "open" && p.dispute_status !== "open" ? `<button class="btn block" id="pay" style="margin-bottom:10px">Pay ${pula(p.owed_thebe)}</button>` : ""}
+    ${p.dispute_id ? `<a class="btn ghost block" href="#/dispute/${p.dispute_id}" style="margin-bottom:10px">View dispute</a>` : ""}
+    ${canDispute ? `<button class="btn ghost block" id="disp">Dispute this charge</button>` : ""}`, "#/trips");
+  if (p.has_image) loadImage(`/me/passages/${p.id}/image`, $("#img"));
+  if ($("#pay")) $("#pay").onclick = () => payViolation(p.violation_id, p.owed_thebe);
+  if ($("#disp")) $("#disp").onclick = () => disputeSheet(p);
+}
+
+async function loadImage(url, img) {
+  try {
+    const res = await fetch(url, { headers: { authorization: "Bearer " + token } });
+    if (res.ok) img.src = URL.createObjectURL(await res.blob());
+  } catch {}
+}
+
+// --- violations ------------------------------------------------------------
+async function fines() {
+  const rows = await api("GET", "/me/violations");
+  const open = rows.filter((v) => v.status === "open");
+  const done = rows.filter((v) => v.status !== "open");
+  const item = (v) => {
+    const [label, cls] = v.disputed ? ["Disputed", "b-warn"] : STAGE[v.stage] ?? ["Due", "b-warn"];
+    return `<li><div class="main"><div class="t1">${esc(v.gantry_name)} · ${day(v.passed_at)}</div>
+      <div class="t2"><span class="plate">${esc(v.plate ?? "")}</span> · toll ${pula(v.amount_due_thebe)}${v.penalty_thebe ? ` + fees ${pula(v.penalty_thebe)}` : ""}</div>
+      <div class="t2">${v.disputed ? "Nothing more is added while we look into your dispute."
+        : v.stage === "grace" ? `Pay by ${day(v.due_by)} to avoid fees`
+        : v.stage === "referred" ? "Referred for roadside enforcement. Paying clears it."
+        : "Overdue. Pay now to avoid the next fee."}</div>
+      <span class="badge ${cls}">${label}</span></div>
+      <div class="amt">${pula(v.owed_thebe)}<br>${v.disputed ? "" : `<button class="btn small" data-pay="${v.id}" data-amt="${v.owed_thebe}" style="margin-top:6px">Pay</button>`}</div></li>`;
+  };
+  const owed = open.reduce((s, v) => s + Number(v.owed_thebe), 0);
+  view.innerHTML = page("To pay", `
+    ${open.length ? `<div class="alert bad"><div class="grow"><b>${pula(owed)} outstanding</b>Unpaid tolls get an admin fee after the grace period, then a late fee, then roadside enforcement.</div></div>
+      <div class="card"><ul class="list">${open.map(item).join("")}</ul></div>`
+      : `<div class="alert good"><div class="grow"><b>You're all paid up</b>Nothing to pay right now.</div></div>`}
+    ${done.length ? `<div class="card"><h2>History</h2><ul class="list">${done.map((v) => `<li><div class="main"><div class="t1">${esc(v.gantry_name)} · ${day(v.passed_at)}</div>
+      <div class="t2">${v.status === "settled" ? "Paid" : "Waived"} ${v.resolved_at ? day(v.resolved_at) : ""}</div></div>
+      <div class="amt">${pula(Number(v.amount_due_thebe) + Number(v.penalty_thebe))}</div></li>`).join("")}</ul></div>` : ""}`);
+  view.querySelectorAll("[data-pay]").forEach((b) => (b.onclick = () => payViolation(b.dataset.pay, Number(b.dataset.amt))));
+}
+
+async function payViolation(id, amount) {
+  const o = me ?? (await api("GET", "/me"));
+  if (o.account.balance_thebe < amount) {
+    toast(`Your balance is ${pula(o.account.balance_thebe)}. Top up first.`);
+    topupSheet(amount - o.account.balance_thebe);
+    return;
+  }
+  if (!confirm(`Pay ${pula(amount)} from your balance?`)) return;
+  try {
+    await api("POST", `/me/violations/${id}/pay`);
+    me = await api("GET", "/me"); updateDot(me);
+    toast("Paid. Thank you!"); route();
+  } catch (e) {
+    if (e.code === "insufficient_funds") { toast("Balance too low. Top up first."); topupSheet(); }
+    else toast(e.message);
+  }
+}
+
+// --- sheets ----------------------------------------------------------------
+function openSheet(html) {
+  closeSheet();
+  const bg = document.createElement("div");
+  bg.className = "sheet-bg"; bg.id = "sheet";
+  bg.innerHTML = `<div class="sheet" role="dialog" aria-modal="true"><div class="grab"></div>${html}</div>`;
+  bg.addEventListener("click", (e) => { if (e.target === bg) closeSheet(); });
+  document.body.appendChild(bg);
+  return bg;
+}
+function closeSheet() { $("#sheet")?.remove(); clearTimeout(pollTimer); }
+
+let pollTimer;
+function topupSheet(suggest) {
+  const amounts = [5000, 10000, 20000, 50000];
+  let amount = typeof suggest === "number" && suggest > 0 ? Math.max(1000, Math.ceil(suggest / 1000) * 1000) : 10000;
+  let provider = store.get("a1TollProvider") || "orange_money";
+  const s = openSheet(`<h3>Top up</h3><p class="hint" style="margin-top:0">Pay from your mobile money wallet. Unpaid tolls billed to your account are paid from it automatically.</p>
+    <label class="f">Pay with</label><div class="chips" id="prov">${PROVIDERS.map(([k, n]) => `<button class="chip" data-p="${k}">${n}</button>`).join("")}</div>
+    <label class="f">Amount</label><div class="chips" id="amts">${amounts.map((a) => `<button class="chip" data-a="${a}">${pula(a)}</button>`).join("")}</div>
+    <input class="f" id="amt" inputmode="decimal" style="margin-top:10px" aria-label="Amount in pula">
+    <label class="f" for="msisdn">Wallet number</label><input class="f" id="msisdn" type="tel" inputmode="tel" placeholder="72 345 678">
+    <div class="hint">Demo wallets: a number ending 0000 has no money, 1111 cancels the PIN prompt.</div>
+    <div class="err" id="err"></div><button class="btn block" id="pay">Top up</button>`);
+  const msisdn = $("#msisdn", s);
+  msisdn.value = store.get("a1TollWallet") || (me?.account?.phone ?? "").replace(/^\+?267/, "");
+  const sync = () => {
+    s.querySelectorAll("[data-p]").forEach((b) => b.classList.toggle("on", b.dataset.p === provider));
+    s.querySelectorAll("[data-a]").forEach((b) => b.classList.toggle("on", Number(b.dataset.a) === amount));
+    $("#amt", s).value = (amount / 100).toFixed(2);
+    $("#pay", s).textContent = `Top up ${pula(amount)}`;
+  };
+  s.querySelectorAll("[data-p]").forEach((b) => (b.onclick = () => { provider = b.dataset.p; sync(); }));
+  s.querySelectorAll("[data-a]").forEach((b) => (b.onclick = () => { amount = Number(b.dataset.a); sync(); }));
+  $("#amt", s).oninput = (e) => { amount = Math.round(parseFloat(e.target.value || "0") * 100) || 0;
+    s.querySelectorAll("[data-a]").forEach((b) => b.classList.toggle("on", Number(b.dataset.a) === amount)); $("#pay", s).textContent = `Top up ${pula(amount)}`; };
+  sync();
+  const key = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
+  $("#pay", s).onclick = async () => {
+    $("#pay", s).disabled = true; $("#err", s).textContent = "";
+    try {
+      store.set("a1TollProvider", provider); store.set("a1TollWallet", msisdn.value.trim());
+      const t = await api("POST", "/me/topups", { provider, amount_thebe: amount, msisdn: msisdn.value.trim() }, { "idempotency-key": key });
+      waitTopup(t, s);
+    } catch (e) { $("#err", s).textContent = e.message; $("#pay", s).disabled = false; }
+  };
+}
+
+function waitTopup(t, s) {
+  const name = Object.fromEntries(PROVIDERS)[t.provider] ?? t.provider;
+  $(".sheet", s).innerHTML = `<div class="grab"></div><div class="center"><div class="spinner"></div><h3>Approve on your phone</h3>
+    <p class="hint">${esc(name)} is asking you to confirm ${pula(t.amount_thebe)} with your PIN.</p></div>`;
+  const started = Date.now();
+  const tick = async () => {
+    let cur;
+    try { cur = await api("GET", `/me/topups/${t.id}`); } catch { cur = t; }
+    if (cur.status === "pending" && Date.now() - started < 60000) { pollTimer = setTimeout(tick, 1000); return; }
+    const ok = cur.status === "succeeded";
+    if (ok) { try { me = await api("GET", "/me"); updateDot(me); } catch {} }
+    const left = ok ? me?.outstanding?.owed_thebe ?? 0 : 0;
+    const why = { insufficient_wallet_balance: "Your wallet doesn't have enough money.", customer_cancelled: "The payment was cancelled on your phone.", card_declined: "Your card was declined." }[cur.failure_reason];
+    $(".sheet", s).innerHTML = `<div class="grab"></div><div class="center" style="padding:14px 0">
+      <div style="font-size:44px">${ok ? "✓" : cur.status === "pending" ? "…" : "✕"}</div>
+      <h3>${ok ? `${pula(cur.amount_thebe)} added` : cur.status === "pending" ? "Still waiting" : "Top-up failed"}</h3>
+      <p class="hint">${ok ? (left ? `You still have ${pula(left)} of unpaid tolls. Tolls from before a plate was on your account are paid by hand.` : "Your balance is up to date. Any unpaid tolls on your account have been paid from it.") : cur.status === "pending" ? "We haven't heard back from your wallet yet. We'll add the money as soon as it confirms." : esc(why ?? cur.failure_reason ?? "Please try again.")}</p>
+      ${left ? `<button class="btn block" id="payNow" style="margin-bottom:10px">Pay what's due</button>` : ""}
+      <button class="btn ${left ? "ghost " : ""}block" id="done">Done</button></div>`;
+    $("#done", s).onclick = () => { closeSheet(); route(); };
+    if (left) $("#payNow", s).onclick = () => { closeSheet(); location.hash = "#/fines"; };
+  };
+  pollTimer = setTimeout(tick, 800);
+}
+
+function disputeSheet(p) {
+  const s = openSheet(`<h3>Dispute this charge</h3>
+    <p class="hint" style="margin-top:0">${esc(p.gantry_name)} · ${when(p.passed_at)} · <span class="plate">${esc(p.plate_read ?? "")}</span>.
+    ${p.violation_status === "open" ? "No fees are added while we look into it." : ""}</p>
+    <form id="df"><label class="f" for="rs">What's wrong?</label>
+    <select class="f" id="rs">${REASONS.map(([k, n]) => `<option value="${k}">${n}</option>`).join("")}</select>
+    <label class="f" for="ds">Tell us what happened</label>
+    <textarea class="f" id="ds" minlength="10" maxlength="2000" required placeholder="e.g. My car was parked at home all day. A police case number, receipt or photo helps."></textarea>
+    <label class="f" for="ev">Evidence (optional)</label>
+    <input type="file" id="ev" accept="image/jpeg,image/png,image/webp,application/pdf" multiple>
+    <div class="files">Up to 3 photos or PDFs, 2 MB each.</div>
+    <div class="err" id="err"></div><button class="btn block" id="send">Send dispute</button></form>`);
+  $("#df", s).onsubmit = async (ev) => {
+    ev.preventDefault();
+    const files = [...$("#ev", s).files];
+    const err = $("#err", s);
+    if (files.length > 3) { err.textContent = "Attach at most 3 files."; return; }
+    const big = files.find((f) => f.size > 2 * 1024 * 1024);
+    if (big) { err.textContent = `${big.name} is larger than 2 MB.`; return; }
+    $("#send", s).disabled = true; err.textContent = "";
+    try {
+      const evidence = await Promise.all(files.map(async (f) => ({ filename: f.name.slice(0, 200), data_b64: await readB64(f) })));
+      const d = await api("POST", "/me/disputes", { passage_id: p.id, reason: $("#rs", s).value, description: $("#ds", s).value.trim(), evidence });
+      closeSheet(); toast(`Dispute sent. Ref ${ref(d.id)}`); location.hash = `#/dispute/${d.id}`;
+    } catch (e) { err.textContent = e.message; $("#send", s).disabled = false; }
+  };
+}
+const readB64 = (file) => new Promise((ok, fail) => {
+  const r = new FileReader();
+  r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, ""));
+  r.onerror = () => fail(new Error(`Couldn't read ${file.name}`));
+  r.readAsDataURL(file);
+});
+
+// --- more ------------------------------------------------------------------
+async function more() {
+  const o = me ?? (await api("GET", "/me")); me = o; updateDot(o);
+  view.innerHTML = page("More", `
+    <div class="card"><div class="t1" style="font-weight:650;font-size:17px">${esc(o.account.holder_name)}</div>
+      <div class="hint" style="margin:2px 0 0">${esc(o.account.phone ?? "")}${o.account.email ? " · " + esc(o.account.email) : ""}</div></div>
+    <div class="card menu">
+      <a href="#/vehicles">Vehicles <span>${o.vehicles.length} ›</span></a>
+      <a href="#/statement">Statement <span>›</span></a>
+      <a href="#/disputes">Disputes <span>${o.open_disputes ? o.open_disputes + " open " : ""}›</span></a>
+      <a href="#/notices">Messages <span>›</span></a>
+      <a href="#/profile">Profile <span>›</span></a>
+    </div>
+    <button class="btn danger block" id="out">Sign out</button>
+    <p class="hint center" style="margin-top:20px">A1 Toll is a simulation. No real money moves and no SMS is sent.</p>`);
+  $("#out").onclick = () => signOut();
+}
+
+async function vehicles() {
+  const [o, classes] = await Promise.all([api("GET", "/me"), api("GET", "/me/vehicle-classes")]);
+  me = o;
+  view.innerHTML = page("Vehicles", `
+    <div class="card">${o.vehicles.length ? `<ul class="list">${o.vehicles.map((v) => `<li><div class="main"><div class="t1"><span class="plate">${esc(v.plate)}</span></div>
+      <div class="t2">Class ${esc(v.vehicle_class)} · ${esc(classes.find((c) => c.code === v.vehicle_class)?.name ?? "")}${v.tag_id ? " · tag fitted" : ""}</div></div>
+      <button class="btn small danger" data-rm="${v.id}" data-plate="${esc(v.plate)}">Remove</button></li>`).join("")}</ul>`
+      : `<div class="empty">No vehicles yet.</div>`}</div>
+    <div class="card"><h2>Add a vehicle</h2><form id="vf">
+      <label class="f" for="pl">Number plate</label><input class="f" id="pl" required placeholder="B 123 ABC" autocapitalize="characters" style="font-family:var(--mono);letter-spacing:1px">
+      <label class="f" for="cl">Vehicle class</label><select class="f" id="cl">${classes.map((c) => `<option value="${esc(c.code)}" ${c.code === "1" ? "selected" : ""}>${esc(c.name)}: ${esc(c.description)}</option>`).join("")}</select>
+      <div class="hint">Only register vehicles you own or keep. Tolls on this plate, including unpaid ones from before you added it, become yours to pay.</div>
+      <div class="err" id="err"></div><button class="btn block" id="add">Add vehicle</button></form></div>`, "#/more");
+  $("#vf").onsubmit = async (ev) => {
+    ev.preventDefault(); $("#add").disabled = true;
+    try { await api("POST", "/me/vehicles", { plate: $("#pl").value, vehicle_class: $("#cl").value }); toast("Vehicle added"); vehicles(); }
+    catch (e) { $("#err").textContent = e.code === "conflict" ? "That plate is already registered to an account." : e.message; $("#add").disabled = false; }
+  };
+  view.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = async () => {
+    if (!confirm(`Remove ${b.dataset.plate}? Tolls on it will no longer be paid from your balance.`)) return;
+    try { await api("DELETE", `/me/vehicles/${b.dataset.rm}`); toast("Vehicle removed"); vehicles(); } catch (e) { toast(e.message); }
+  }));
+}
+
+async function statement(arg) {
+  const now = new Date();
+  const periods = {
+    "30d": ["Last 30 days", new Date(now - 30 * 864e5), now],
+    "month": ["This month", new Date(now.getFullYear(), now.getMonth(), 1), now],
+    "last": ["Last month", new Date(now.getFullYear(), now.getMonth() - 1, 1), new Date(now.getFullYear(), now.getMonth(), 1)],
+  };
+  const key = periods[arg] ? arg : "30d";
+  const [, from, to] = periods[key];
+  const st = await api("GET", `/me/statement?from=${from.toISOString()}&to=${to.toISOString()}`);
+  const label = { topup: "Top-up", toll: "Toll", penalty: "Fees", refund: "Refund", adjustment: "Adjustment" };
+  view.innerHTML = page("Statement", `
+    <div class="chips" style="margin-bottom:12px">${Object.entries(periods).map(([k, [n]]) => `<a class="chip ${k === key ? "on" : ""}" href="#/statement/${k}" style="text-decoration:none">${n}</a>`).join("")}</div>
+    <div class="card"><dl class="kv">
+      <dt>Opening balance</dt><dd>${pula(st.opening_balance_thebe)}</dd>
+      <dt>Top-ups</dt><dd>+ ${pula(st.totals.topups_thebe)}</dd>
+      <dt>Tolls</dt><dd>− ${pula(st.totals.tolls_thebe)}</dd>
+      ${st.totals.penalties_thebe ? `<dt>Fees</dt><dd>− ${pula(st.totals.penalties_thebe)}</dd>` : ""}
+      ${st.totals.refunds_thebe ? `<dt>Refunds</dt><dd>+ ${pula(st.totals.refunds_thebe)}</dd>` : ""}
+      ${st.totals.adjustments_thebe ? `<dt>Adjustments</dt><dd>${pula(st.totals.adjustments_thebe)}</dd>` : ""}
+      <dt><b>Closing balance</b></dt><dd><b>${pula(st.closing_balance_thebe)}</b></dd>
+      ${st.outstanding_thebe ? `<dt style="color:var(--bad)">Unpaid</dt><dd style="color:var(--bad)">${pula(st.outstanding_thebe)}</dd>` : ""}
+    </dl></div>
+    <div class="card"><h2>${day(st.period.from)} to ${day(st.period.to)}</h2>${st.entries.length ? `<ul class="list">${[...st.entries].reverse().map((e) => `<li><div class="main">
+      <div class="t1">${label[e.kind] ?? e.kind}${e.gantry_id ? " · " + esc(e.gantry_id) : ""}${e.provider ? " · " + esc(Object.fromEntries(PROVIDERS)[e.provider] ?? e.provider) : ""}</div>
+      <div class="t2">${when(e.created_at)}${e.plate_read ? ` · <span class="plate">${esc(e.plate_read)}</span>` : ""}</div></div>
+      <div class="amt" style="color:${e.amount_thebe > 0 ? "var(--good)" : "inherit"}">${e.amount_thebe > 0 ? "+" : "−"} ${pula(Math.abs(e.amount_thebe))}<br><span class="t2">${pula(e.balance_after)}</span></div></li>`).join("")}</ul>`
+      : `<div class="empty">No transactions in this period.</div>`}</div>`, "#/more");
+}
+
+const disputeBadge = (s) => ({ open: `<span class="badge b-warn">In progress</span>`, upheld: `<span class="badge b-good">Upheld</span>`, rejected: `<span class="badge b-bad">Not upheld</span>` })[s];
+async function disputes() {
+  const rows = await api("GET", "/me/disputes");
+  view.innerHTML = page("Disputes", `<div class="card">${rows.length ? `<ul class="list">${rows.map((d) => `<li class="tap" onclick="location.hash='#/dispute/${d.id}'"><div class="main">
+      <div class="t1">${esc(REASONS.find(([k]) => k === d.reason)?.[1] ?? d.reason)}</div>
+      <div class="t2">${esc(d.gantry_id)} · ${day(d.passed_at)} · ref ${ref(d.id)}</div></div><div class="amt">${disputeBadge(d.status)}</div></li>`).join("")}</ul>`
+    : `<div class="empty">No disputes. If a charge looks wrong, open the trip and tap "Dispute this charge".</div>`}</div>`, "#/more");
+}
+
+async function dispute(id) {
+  const d = await api("GET", `/me/disputes/${id}`);
+  view.innerHTML = page(`Dispute ${ref(d.id)}`, `
+    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0">Status</h2>${disputeBadge(d.status)}</div>
+      ${d.status === "open" ? `<p style="margin:10px 0 0">We're looking into it. ${d.violation_status === "open" ? "No fees are added in the meantime." : ""} You'll get a message with the outcome.</p>`
+        : `<p style="margin:10px 0 4px"><b>${d.status === "upheld" ? "Your dispute was upheld." : "Your dispute was not upheld."}</b></p>
+           <p style="margin:0">${esc(d.resolution_note)}</p>
+           ${d.refund_thebe ? `<div class="alert good" style="margin:12px 0 0"><div class="grow"><b>${pula(d.refund_thebe)} refunded</b>to your balance.</div></div>` : ""}
+           ${d.corrected_class ? `<p class="hint">Re-rated as class ${esc(d.corrected_class)}.</p>` : ""}
+           ${d.status === "rejected" && d.violation_status === "open" ? `<p class="hint">The time you had left to pay has been given back. <a href="#/fines">Pay now</a></p>` : ""}`}</div>
+    <div class="card"><h2>Your dispute</h2><dl class="kv">
+      <dt>Trip</dt><dd>${esc(d.gantry_id)} · ${when(d.passed_at)}</dd><dt>Plate</dt><dd><span class="plate">${esc(d.plate_read ?? "")}</span></dd>
+      <dt>Reason</dt><dd>${esc(REASONS.find(([k]) => k === d.reason)?.[1] ?? d.reason)}</dd><dt>Sent</dt><dd>${when(d.created_at)}</dd>
+      ${d.resolved_at ? `<dt>Decided</dt><dd>${when(d.resolved_at)}</dd>` : ""}</dl>
+      <p style="margin:12px 0 0;white-space:pre-wrap">${esc(d.description)}</p>
+      ${d.evidence?.length ? `<p class="hint">${d.evidence.length} file${d.evidence.length > 1 ? "s" : ""} attached: ${d.evidence.map((e) => esc(e.filename)).join(", ")}</p>` : ""}</div>`, "#/disputes");
+}
+
+async function notices() {
+  const rows = await api("GET", "/me/notices");
+  view.innerHTML = page("Messages", `<div class="card">${rows.length ? `<ul class="list">${rows.map((n) => `<li class="notice"><div class="main">
+      <div class="t1">${esc(n.subject ?? n.kind)}</div><div class="t2">${when(n.created_at)} · ${esc(n.channel.toUpperCase())}</div>
+      <div class="body">${esc(n.body)}</div></div></li>`).join("")}</ul>` : `<div class="empty">No messages yet.</div>`}</div>`, "#/more");
+}
+
+async function profile() {
+  const o = await api("GET", "/me"); me = o;
+  view.innerHTML = page("Profile", `<div class="card"><form id="pf">
+    <label class="f" for="nm">Full name</label><input class="f" id="nm" required minlength="2" value="${esc(o.account.holder_name)}">
+    <label class="f" for="em">Email (for statements and notices)</label><input class="f" id="em" type="email" value="${esc(o.account.email ?? "")}" placeholder="you@example.com">
+    <label class="f">Mobile number</label><input class="f" disabled value="${esc(o.account.phone ?? "")}">
+    <div class="hint">Your mobile number is how you sign in, so it can't be changed here.</div>
+    <div class="err" id="err"></div><button class="btn block" id="save">Save</button></form></div>`, "#/more");
+  $("#pf").onsubmit = async (ev) => {
+    ev.preventDefault(); $("#save").disabled = true;
+    try {
+      await api("PATCH", "/me", { holder_name: $("#nm").value.trim(), email: $("#em").value.trim() || null });
+      me = null; toast("Saved"); location.hash = "#/more";
+    } catch (e) { $("#err").textContent = e.message; $("#save").disabled = false; }
+  };
+}
+
+route();
+</script>
+</body>
+</html>

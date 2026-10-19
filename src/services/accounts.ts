@@ -103,11 +103,13 @@ export async function registerVehicle(
   });
 }
 
-export async function deactivateVehicle(db: Db, vehicleId: string, actor: string) {
+/** ownerId, when given, limits it to that account's vehicles (the customer app). */
+export async function deactivateVehicle(db: Db, vehicleId: string, actor: string, ownerId?: string) {
   return db.tx(async (q) => {
-    const { rows } = await q.query("UPDATE vehicles SET active = false WHERE id = $1 AND active RETURNING *", [
-      vehicleId,
-    ]);
+    const { rows } = await q.query(
+      "UPDATE vehicles SET active = false WHERE id = $1 AND active AND ($2::uuid IS NULL OR account_id = $2) RETURNING *",
+      [vehicleId, ownerId ?? null],
+    );
     if (!rows[0]) throw notFound("active vehicle");
     await audit(q, actor, "vehicle.deactivated", "vehicle", vehicleId, { plate: rows[0].plate });
     return rows[0];

@@ -38,7 +38,8 @@ export async function buildStatement(q: Queryable, accountId: string, range: z.i
     entries.filter((e: any) => e.kind === kind).reduce((s: number, e: any) => s + e.amount_thebe, 0);
 
   const { rows: openViolations } = await q.query(
-    `SELECT v.id, v.reason, v.amount_due_thebe, v.due_by, p.gantry_id, p.passed_at, p.plate_read
+    `SELECT v.id, v.reason, v.stage, v.amount_due_thebe, v.penalty_thebe,
+            v.amount_due_thebe + v.penalty_thebe AS owed_thebe, v.due_by, p.gantry_id, p.passed_at, p.plate_read
      FROM violations v JOIN passages p ON p.id = v.passage_id
      WHERE v.account_id = $1 AND v.status = 'open' ORDER BY v.created_at`,
     [accountId],
@@ -52,10 +53,12 @@ export async function buildStatement(q: Queryable, accountId: string, range: z.i
     totals: {
       topups_thebe: sum("topup"),
       tolls_thebe: -sum("toll"),
+      penalties_thebe: -sum("penalty"),
+      refunds_thebe: sum("refund"),
       adjustments_thebe: sum("adjustment"),
     },
     entries,
     open_violations: openViolations,
-    outstanding_thebe: openViolations.reduce((s: number, v: any) => s + v.amount_due_thebe, 0),
+    outstanding_thebe: openViolations.reduce((s: number, v: any) => s + v.owed_thebe, 0),
   };
 }
