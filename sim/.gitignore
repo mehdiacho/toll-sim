@@ -1,0 +1,5 @@
+.venv/
+data/
+net/
+out/
+__pycache__/

@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import type { Config } from "./config.js";
@@ -16,6 +19,7 @@ import {
   setAccountStatus,
 } from "./services/accounts.js";
 import { verifyAuditChain } from "./services/audit.js";
+import { dashboardSnapshot } from "./services/dashboard.js";
 import { ingestPassage, listPassages, passageBatchInput, passageInput, passageQuery } from "./services/passages.js";
 import { buildStatement, statementQuery } from "./services/statements.js";
 import { newTariffInput, scheduleTariff } from "./services/tariffs.js";
@@ -241,7 +245,30 @@ export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
   });
   app.get("/audit/verify", admin, async () => verifyAuditChain(db));
 
+  // --- operations dashboard -------------------------------------------------
+  // The page and the corridor map are public; the numbers need the admin key,
+  // which the page asks for and keeps in localStorage.
+  const dashboardFile = (name: string) => readFileSync(join(dashboardDir(), name));
+  app.get("/dashboard", async (_req, reply) => reply.type("text/html; charset=utf-8").send(dashboardFile("index.html")));
+  app.get("/dashboard/corridor.json", async (_req, reply) => reply.type("application/json").send(dashboardFile("corridor.json")));
+  app.get("/dashboard/data", admin, async (req) => {
+    const { window_minutes } = z
+      .object({ window_minutes: z.coerce.number().int().min(5).max(24 * 60).default(60) })
+      .parse(req.query);
+    return dashboardSnapshot(db, window_minutes);
+  });
+
   return app;
+}
+
+/** Finds the repo's dashboard/ folder whether running from src/ (tsx) or dist/ (node). */
+function dashboardDir(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 6; i++) {
+    if (existsSync(join(dir, "dashboard", "index.html"))) return join(dir, "dashboard");
+    dir = dirname(dir);
+  }
+  throw new AppError(404, "not_found", "dashboard files are not installed");
 }
 
 function header(req: FastifyRequest, name: string): string | undefined {

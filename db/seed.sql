@@ -9,13 +9,14 @@ INSERT INTO vehicle_classes (code, name, description) VALUES
   ('4', 'Extra heavy',  'Vehicles with 5 or more axles, including most haulage rigs')
 ON CONFLICT (code) DO NOTHING;
 
--- Three virtual gantries on the A1 between Gaborone and Mahalapye.
--- km is measured north from the Gaborone end. Coordinates are approximate and
--- will be replaced by snapped positions from the SUMO network.
+-- Three virtual gantries on the A1 between Gaborone and Mahalapye. km and
+-- coordinates come from sim/build_network.py: km is along the northbound
+-- carriageway of the SUMO network, which starts at the A1's northern exit from
+-- Gaborone. Placement near each place name is approximate.
 INSERT INTO gantries (id, name, road, km, direction, lat, lng) VALUES
-  ('A1-G01', 'Mmamashia', 'A1', 18.0,  'both', -24.4560, 26.0060),
-  ('A1-G02', 'Artesia',   'A1', 78.0,  'both', -24.0300, 26.3000),
-  ('A1-G03', 'Dibete',    'A1', 128.0, 'both', -23.7500, 26.4300)
+  ('A1-G01', 'Mmamashia', 'A1', 11.8,  'both', -24.520967, 26.001583),
+  ('A1-G02', 'Artesia',   'A1', 75.4,  'both', -24.035115, 26.311252),
+  ('A1-G03', 'Dibete',    'A1', 108.3, 'both', -23.773484, 26.458248)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO tariffs (gantry_id, vehicle_class, amount_thebe, valid_from)

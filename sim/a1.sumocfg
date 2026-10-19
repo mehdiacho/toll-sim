@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Built by build_network.py (net, additional) and demand.py (routes). -->
+<configuration>
+  <input>
+    <net-file value="net/a1.net.xml"/>
+    <route-files value="net/a1.rou.xml"/>
+    <additional-files value="net/gantries.add.xml"/>
+  </input>
+  <processing>
+    <lateral-resolution value="0.8"/>
+    <time-to-teleport value="300"/>
+  </processing>
+  <report>
+    <no-step-log value="true"/>
+    <no-warnings value="true"/>
+  </report>
+</configuration>

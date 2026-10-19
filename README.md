@@ -13,7 +13,8 @@ statement for every account, a grace period before any unpaid passage counts
 against the driver, and payment through the channels Batswana already use:
 Orange Money, MyZaka, Smega and card.
 
-**Status:** step 1 of 4, the back-office core, is done. See [Roadmap](#roadmap).
+**Status:** steps 1 and 2 of 4 are done: the back-office core, and a SUMO traffic
+simulation of the A1 streaming passages into it, with a live dashboard. See [Roadmap](#roadmap).
 
 ## What it does
 
@@ -142,6 +143,64 @@ The ingest key can only call `POST /passages`.
 | GET | `/violations?status=&account_id=&plate=` | |
 | POST | `/violations/:id/settle`, `/violations/:id/waive` | |
 | GET | `/audit?entity_type=&entity_id=`, `/audit/verify` | |
+| GET | `/dashboard` | operations dashboard page (public; asks for the admin key) |
+| GET | `/dashboard/data?window_minutes=60` | dashboard snapshot |
+
+## Traffic simulation (step 2)
+
+`sim/` drives the back office with simulated traffic on the A1 between Gaborone and
+Mahalapye.
+
+- **`build_network.py`** cuts the A1 out of the Geofabrik Botswana extract and runs
+  `netconvert` with left-hand traffic. The result is a 213 km dual carriageway in
+  each direction. It places the three gantries next to Mmamashia, Artesia and Dibete
+  (the km and coordinates in `db/seed.sql` come from this script), with an
+  induction loop on every lane. It also writes the corridor map the dashboard draws.
+- **`demand.py`** writes the traffic: through, local and regional flows, about 1,100
+  vehicles an hour. The vehicle mix maps onto the toll classes, and each vType id is
+  its class code.
+- **`bridge.py`** runs SUMO over TraCI. The first time, it creates a synthetic fleet
+  through the API: 1,200 accounts and about 2,600 vehicles with Botswana plates. Some
+  have tags and some are fleet operators. They are funded through the mock
+  mobile-money top-ups, and about 1 in 8 accounts is kept short on purpose. Each
+  vehicle that enters the network becomes a registered vehicle of its class (85%) or
+  an unregistered one. Each gantry crossing becomes a read with realistic noise: 1% of
+  tag reads are missed, 2% of plates are misread with OCR-style confusions such as
+  8↔B and 0↔D, and 3% of vehicles get the wrong class. Reads are posted to
+  `/passages` in batches on a simulated clock. When a passage comes back unpaid for
+  lack of funds, the owner tops up half the time, which settles the violation in the
+  back office.
+
+The dashboard at `http://127.0.0.1:3000/dashboard` shows the corridor map with the
+gantries pulsing as reads arrive, plus passages per minute, revenue, the class mix,
+top-ups by provider, violations and a live passage feed.
+
+### Running it
+
+You need Python 3.11+. SUMO comes from pip, so it doesn't need a separate install.
+
+```sh
+cd sim
+python -m venv .venv
+.venv/Scripts/pip install -r requirements.txt        # .venv/bin/pip on Linux/macOS
+# about 90 MB from download.geofabrik.de
+curl -o data/osm/botswana-latest.osm.pbf --create-dirs https://download.geofabrik.de/africa/botswana-latest.osm.pbf
+.venv/Scripts/python build_network.py                # net/a1.net.xml, gantries, corridor map
+.venv/Scripts/python demand.py --hours 2             # net/a1.rou.xml
+```
+
+Then start the back office (`npm run dev:lite` in the repo root) and:
+
+```sh
+.venv/Scripts/python bridge.py                       # 10x real time, headless
+.venv/Scripts/python bridge.py --gui                 # watch it in sumo-gui
+.venv/Scripts/python bridge.py --speed 0 --hours 1   # as fast as possible
+```
+
+The fleet is saved to `sim/out/fleet.json` and reused while the back office still
+has it. Delete `.pglite/` for a clean slate. `bridge.py --help` lists the noise and
+behaviour knobs. A simulated hour at the defaults gives roughly 77% charged, 16%
+unregistered and 6% short of funds.
 
 ## Layout
 
@@ -153,15 +212,17 @@ src/services/      accounts, tariffs, passages, ledger, topups, violations, stat
 src/payments/      gateway client and callback signing
 src/momo/          the mock mobile-money service
 scripts/dev-lite.ts
+dashboard/         operations dashboard (one HTML file) and the corridor map
+sim/               SUMO network builder, demand generator, TraCI bridge
 test/              end-to-end tests over real HTTP, with PGlite or Postgres
 ```
 
 ## Roadmap
 
 1. **Back-office core.** Done.
-2. **Traffic simulation.** A SUMO scenario of the A1 from Gaborone to Mahalapye, built
-   from the Geofabrik Botswana OSM extract. Virtual gantries will stream passages into
-   the API over TraCI, with a live dashboard.
+2. **Traffic simulation.** Done. A SUMO scenario of the A1 from Gaborone to Mahalapye,
+   built from OSM, streams passages from three virtual gantries over TraCI, with a
+   live dashboard.
 3. **ANPR.** Synthetic Botswana plates, a plate-reading model, and a review queue for
    low-confidence reads.
 4. **Enforcement, disputes and a customer app.**

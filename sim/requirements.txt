@@ -1,0 +1,5 @@
+eclipse-sumo==1.28.0
+traci==1.28.0
+sumolib==1.28.0
+osmium==4.3.2
+pyproj==3.8.0
