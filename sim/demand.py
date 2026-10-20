@@ -33,8 +33,8 @@ VTYPES = [
 
 # Vehicles per hour at scale 1.0, per direction. A1 north of Gaborone carries
 # several thousand vehicles a day; these are a busy-hour demo, not survey data.
-THROUGH_VPH = 220
-LOCAL_VPH = 260  # split across intermediate stops
+THROUGH_VPH = 250
+LOCAL_VPH = 420  # split across intermediate stops; enough to queue at the Mmamashia plaza at the peaks
 REGIONAL_VPH = 90
 
 

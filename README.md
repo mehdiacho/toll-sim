@@ -1,9 +1,11 @@
 # toll-sim
 
-The back office for an open-road (free-flow) toll on Botswana's A1, built as a
-portfolio project. There are no booths. Gantries read a plate or a tag as a vehicle
-passes, and everything after that is software: matching the read to an account,
-pricing it, taking the money, and following up when there isn't enough.
+The back office for a toll on Botswana's A1, built as a portfolio project. The
+three sites are South African-style mainline toll plazas: five lanes per direction
+behind booms, an e-tag lane for tagged accounts and booths for cash and card. A
+tag read at the boom is matched to an account, priced and debited; a booth payment
+is recorded against the plaza; a plate camera audits every vehicle and catches the
+ones that run the boom. Everything after the boom is software.
 
 Botswana is expected to toll the A1 through a PPP. Gauteng's e-tolls are the
 cautionary tale next door. They failed less on engineering than on billing that
@@ -24,10 +26,29 @@ it isn't sure of, and enforcement, disputes and a mobile-first customer app. See
 - **Accounts, vehicles and tags.** A vehicle is registered by plate, with an optional
   tag id. A plate or tag can be live on only one account at a time.
 - **Vehicle classes and versioned tariffs.** Five classes (M, 1–4) and a price per
-  class per gantry. A price change closes the old row instead of overwriting it, so
-  a passage from last month is always rated at last month's price.
-- **Gantries.** Three virtual gantries between Gaborone and Mahalapye: Mmamashia,
-  Artesia and Dibete.
+  class per plaza. A price change closes the old row instead of overwriting it, so
+  a passage from last month is always rated at last month's price. Motorcycles
+  (class M) pay the Class 1 toll, as at South African plazas; the simulation keeps
+  their own vehicle type.
+- **Toll plazas.** Three mainline plazas between Gaborone and Mahalapye: Mmamashia
+  (km 11.8), Artesia (km 74.5) and Dibete (km 108.3). Each direction has five lanes,
+  kerb side first: two heavy-vehicle lanes (wider), two mixed lanes (cash, card or
+  tag) and one e-tag lane. The road widens from its usual one or two lanes over the
+  last 200 m, the limit steps down to 80, 60 and then 40 km/h on the approach,
+  and the lanes taper back after the booms.
+- **Paying at the plaza.** A tag read at the boom (`POST /passages` with
+  `payment: "tag"`, `lane` and `direction`) debits the account as before. If the
+  account can't pay, or the tag is unknown, the passage is `declined`: the boom
+  stays down, nothing is owed and the driver pays by card at the booth. Cash and card
+  go to `POST /plaza/transactions`: plaza, lane, direction, method, class, amount and
+  time, with no account behind them, append-only like the ledger. A card payment
+  after a declined tag links to that passage, once.
+- **Plate audit.** The camera reads every vehicle. A confident read of a different
+  plate from the one the tag is registered to is flagged (`tag_plate_mismatch`), as
+  is a tag on the wrong class. A boom runner (`payment: "runner"`) becomes a
+  `boom_runner` violation even if the account could have paid, and a low-confidence
+  read of one goes to the review queue first; from there it follows the same
+  enforcement ladder as any unpaid passage.
 - **Passage ingest.** `POST /passages` takes one read or a batch of up to 500. Each read
   is matched (tag first, then plate), rated, and either charged straight away or
   recorded as unpaid with a violation. It is idempotent on
@@ -125,7 +146,8 @@ curl -s -H "$H" $API/audit/verify
 ## API
 
 Every route except `/health`, the provider callbacks, the static pages and `/auth/*`
-needs `Authorization: Bearer <key>`. The ingest key can only call `POST /passages`.
+needs `Authorization: Bearer <key>`. The ingest key can only call `POST /passages`,
+`POST /plaza/transactions`, `GET /plazas` and `POST /live/frame`.
 The `/me` routes take a customer session token instead, and an admin key is not one.
 
 | Method | Path | |
@@ -140,7 +162,10 @@ The `/me` routes take a customer session token instead, and an admin key is not 
 | DELETE | `/vehicles/:id` | deactivate (soft) |
 | GET | `/accounts/:id/statement?from=&to=` | |
 | POST | `/passages` | one read, or `{ "events": [...] }` |
-| GET | `/passages?plate=&gantry_id=&account_id=&status=` | |
+| GET | `/passages?plate=&gantry_id=&account_id=&status=` | `status` includes `declined` |
+| POST | `/plaza/transactions` | one booth payment, or `{ "transactions": [...] }` (ingest key) |
+| GET | `/plaza/transactions?plaza_id=&method=&since=` | |
+| GET | `/plazas` | today's count and takings per plaza by method, declined tags, runners |
 | POST | `/accounts/:id/topups` | honours `Idempotency-Key` |
 | GET | `/topups/:id` | |
 | POST | `/payments/callbacks/:provider` | signed provider callback |
@@ -178,23 +203,40 @@ Mahalapye.
 
 - **`build_network.py`** cuts the A1 out of the Geofabrik Botswana extract and runs
   `netconvert` with left-hand traffic. The result is a 213 km dual carriageway in
-  each direction. It places the three gantries next to Mmamashia, Artesia and Dibete
-  (the km and coordinates in `db/seed.sql` come from this script), with an
-  induction loop on every lane. It also writes the corridor map the dashboard draws.
-- **`demand.py`** writes the traffic: through, local and regional flows, about 1,100
-  vehicles an hour. The vehicle mix maps onto the toll classes, and each vType id is
-  its class code.
+  each direction. It cuts the three toll plazas into the road next to Mmamashia,
+  Artesia and Dibete (the km and coordinates in `db/seed.sql` and migration 004 come
+  from this script): the widening, the five booth lanes per direction with their
+  types and widths, the speed steps and the taper, with explicit lane connections so
+  every booth lane is reachable. Induction loops just past the booms catch boom
+  runners. A rebuild reproduces all of it. It also writes the corridor map the
+  dashboard draws, and `export_3d.py` adds every plaza lane to `live/road.json`.
+- **`demand.py`** writes the traffic: through, local and regional flows, about 1,500
+  vehicles an hour at the busy hour, enough for queues at the peaks. The vehicle mix
+  maps onto the toll classes, and each vType id is its class code.
 - **`bridge.py`** runs SUMO over TraCI. The first time, it creates a synthetic fleet
   through the API: 1,200 accounts and about 2,600 vehicles with Botswana plates. Some
   have tags and some are fleet operators. They are funded through the mock
   mobile-money top-ups, and about 1 in 8 accounts is kept short on purpose. Each
   vehicle that enters the network becomes a registered vehicle of its class (85%) or
-  an unregistered one. Each gantry crossing becomes a read with realistic noise: 1% of
-  tag reads are missed, 2% of plates are misread with OCR-style confusions such as
-  8↔B and 0↔D, and 3% of vehicles get the wrong class. Reads are posted to
-  `/passages` in batches on a simulated clock. When a passage comes back unpaid for
-  lack of funds, the owner tops up half the time, which settles the violation in the
-  back office.
+  an unregistered one.
+- **At each plaza** a vehicle picks its lane on the approach by how it will pay, then
+  stops at the booth line (a TraCI stop) for its service time:
+
+  | Vehicle | Lane | Service at the boom |
+  | --- | --- | --- |
+  | Class 2, 3, 4 | heavy (0–1) | tag 3–5 s, else cash or card 8–12 s |
+  | Tagged M or 1 | e-tag (4), sometimes mixed | e-tag 1–2 s at rest, tag in a mixed lane 3–5 s |
+  | Untagged or unregistered M or 1 | mixed (2–3) | cash (60%) or card 8–12 s |
+  | Tag declined or missed | stays put | pays by card, 10–25 s more |
+
+  Drivers take the open lane of their type with the fewest vehicles assigned. Lanes
+  open with demand (`demand.day_factor`): all five at the peaks, four (0, 2, 3, 4)
+  through the day, three (0, 2, 4) at night. About 0.3% of drivers run the boom.
+  Tag reads go to `/passages` at once and the boom waits for the answer; cash and
+  card go to `/plaza/transactions`. The camera read on every vehicle carries
+  realistic noise: 1% of tags are missed, 2% of plates are misread with OCR-style
+  confusions such as 8↔B and 0↔D, and 3% of vehicles get the wrong class. When a tag
+  is declined for lack of funds, the owner tops up half the time.
 
 The dashboard at `http://127.0.0.1:3000/dashboard` shows the corridor map with the
 gantries pulsing as reads arrive, plus passages per minute, revenue, the class mix,
@@ -224,8 +266,10 @@ Then start the back office (`npm run dev:lite` in the repo root) and:
 
 The fleet is saved to `sim/out/fleet.json` and reused while the back office still
 has it. Delete `.pglite/` for a clean slate. `bridge.py --help` lists the noise and
-behaviour knobs. A simulated hour at the defaults gives roughly 77% charged, 16%
-unregistered and 6% short of funds.
+behaviour knobs. From 06:15 to 08:00 at the defaults, about 37% of vehicles pay by
+tag, 38% cash and 25% card; about 2% of tags are declined; the average time from
+joining the queue to the boom going up is 20–26 s, and queues of up to ten vehicles
+build in the peak direction.
 
 ## Plate reading and review (step 3)
 
@@ -379,6 +423,19 @@ can, so the visitor can watch their own car reach the next gantry. Every page ca
 a notice that this is an independent demo with synthetic data, the API sends a CSP and
 the usual security headers, public bodies are capped at 1 MB, and container logs
 rotate at 3 x 10 MB.
+
+### Plaza fields in the live feed
+
+All optional, so older viewers keep working. `live/road.json` adds
+`plazas: [{id, name, km, x, y, heading, lanes: [{dir, idx, type, x, y, w}]}]`, with
+each lane's centre at the booth line and `heading` the direction of northbound travel
+(radians, math convention). Frame `events[]` items gain `plaza`, `lane` and `method`
+(`tag`, `cash`, `card`, `plate` or `runner`). `stats.plazas[id]` is
+`{open: {N, S}, queue: {N, S}, wait_s, by_method: {tag, cash, card}}`, counted since
+midnight. `booms: [[plazaId, dir, lane, 0|1]]` lists booms that moved since the last
+frame (1 = up), and `lanes_open: {[plazaId]: {N: [...], S: [...]}}` comes when it
+changes. `/live/snapshot` and the stream's first message carry the full `booms` and
+`lanes_open` state.
 
 ## 3D live viewer and landing page
 
