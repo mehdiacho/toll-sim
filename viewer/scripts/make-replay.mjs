@@ -217,9 +217,9 @@ function plazaCap(t, lane) {
 const CLASSES = [
   // class, share, length m, desired speed km/h range
   ["1", 0.71, 4.6, [95, 125]],
-  ["2", 0.09, 12, [85, 100]],
-  ["3", 0.08, 10, [75, 92]],
-  ["4", 0.09, 18, [70, 85]],
+  ["2", 0.09, 7.5, [85, 100]],
+  ["3", 0.08, 12, [75, 92]],
+  ["4", 0.09, 18.5, [70, 85]],
   ["M", 0.03, 2.2, [85, 120]],
 ];
 const LETTERS = "ABCDEFGHJKLMNPRSTUVWXYZ";
@@ -551,7 +551,18 @@ function step(t) {
   }
 }
 
+// Like SUMO, the replay reports the front bumper (v.s is the centre here).
 function position(v) {
+  const centre = v.s;
+  v.s = centre + v.length / 2;
+  try {
+    return positionAtS(v);
+  } finally {
+    v.s = centre;
+  }
+}
+
+function positionAtS(v) {
   const { x, y } = roadXY(v);
   const ga = gateAt(v.route, v.s);
   if (ga && v.pz && v.pz.g === ga.g) {

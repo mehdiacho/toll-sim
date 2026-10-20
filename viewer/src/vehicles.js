@@ -3,13 +3,9 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
-export const CLASS_INFO = {
-  M: { name: "Motorcycle", len: 2.1, color: "#e0564f" },
-  1: { name: "Car", len: 4.5, color: "#e8edf3" },
-  2: { name: "Bus", len: 12, color: "#f5b83d" },
-  3: { name: "Truck", len: 10, color: "#75aadb" },
-  4: { name: "Trailer truck", len: 18, color: "#9b8cf0" },
-};
+import { CLASS_INFO, classLen } from "./vehicle-geometry.js";
+
+export { CLASS_INFO };
 
 const PALETTES = {
   M: [0xd23b33, 0x202225, 0x2f5fb3, 0xe7e7e7],
@@ -34,8 +30,17 @@ const GLASS = 0x1a222c;
 const TYRE = 0x111111;
 const WHITE = 0xffffff;
 
+// Each model is drawn at this length, then stretched to the sim's length.
+const MODEL_LEN = { M: 2.1, 1: 4.5, 2: 7.5, 3: 10, 4: 18 };
+
 // Models face -z (forward), centred on the vehicle's position.
 function model(cls) {
+  const g = mergeGeometries(parts(cls));
+  g.scale(1, 1, classLen(cls) / MODEL_LEN[cls]);
+  return g;
+}
+
+function parts(cls) {
   const parts = [];
   if (cls === "1") {
     parts.push(box(1.8, 0.7, 4.5, 0, 0.62, 0, WHITE));
@@ -43,10 +48,11 @@ function model(cls) {
     parts.push(box(1.64, 0.08, 2.0, 0, 1.58, 0.3, WHITE));
     parts.push(box(1.84, 0.34, 4.3, 0, 0.27, 0, TYRE));
   } else if (cls === "2") {
-    parts.push(box(2.5, 2.4, 12, 0, 1.75, 0, WHITE));
-    parts.push(box(2.54, 0.85, 10.6, 0, 2.15, 0.4, GLASS));
-    parts.push(box(2.4, 1.0, 0.1, 0, 2.1, -6.01, GLASS));
-    parts.push(box(2.52, 0.5, 11.8, 0, 0.35, 0, TYRE));
+    // midi coach, as long as the sim's bus vType
+    parts.push(box(2.4, 2.3, 7.5, 0, 1.7, 0, WHITE));
+    parts.push(box(2.44, 0.8, 6.3, 0, 2.1, 0.35, GLASS));
+    parts.push(box(2.3, 1.0, 0.1, 0, 2.05, -3.76, GLASS));
+    parts.push(box(2.42, 0.5, 7.3, 0, 0.35, 0, TYRE));
   } else if (cls === "3") {
     parts.push(box(2.4, 2.3, 2.2, 0, 1.75, -3.9, WHITE));
     parts.push(box(2.3, 0.8, 0.08, 0, 2.3, -5.01, GLASS));
@@ -63,12 +69,12 @@ function model(cls) {
     parts.push(box(0.32, 0.3, 0.3, 0, 1.75, 0.05, 0x333333));
     parts.push(box(0.2, 0.62, 1.9, 0, 0.31, 0, TYRE));
   }
-  return mergeGeometries(parts);
+  return parts;
 }
 
 function lamps(cls) {
-  const L = CLASS_INFO[cls].len;
-  const w = cls === "1" ? 1.8 : cls === "M" ? 0.4 : 2.45;
+  const L = classLen(cls);
+  const w = cls === "1" ? 1.8 : cls === "M" ? 0.4 : cls === "2" ? 2.35 : 2.45;
   const y = cls === "1" ? 0.72 : cls === "M" ? 0.95 : 0.9;
   const parts = [];
   const xs = cls === "M" ? [0] : [-w / 2 + 0.3, w / 2 - 0.3];
@@ -121,7 +127,7 @@ export class VehicleLayer {
     }
     const poolGeo = new THREE.PlaneGeometry(7, 26);
     poolGeo.rotateX(-Math.PI / 2);
-    poolGeo.translate(0, 0.1, -13);
+    poolGeo.translate(0, 0.1, -12.5);
     this.poolMat = new THREE.MeshBasicMaterial({
       map: poolTexture(),
       transparent: true,
@@ -177,7 +183,12 @@ export class VehicleLayer {
       this.col.setHex(VehicleLayer.colorFor(cls, v.id));
       if (v.id === highlightId) this.col.lerp(new THREE.Color(0x9fd0ff), 0.25);
       this.meshes[cls].setColorAt(k, this.col);
-      if (night > 0.02 && pc < this.capacity) this.pools.setMatrixAt(pc, o.matrix);
+      if (night > 0.02 && pc < this.capacity) {
+        // the pool hangs off the front bumper, not the middle of the body
+        o.translateZ(-classLen(cls) / 2);
+        o.updateMatrix();
+        this.pools.setMatrixAt(pc, o.matrix);
+      }
       const c = v.id === highlightId ? this.col.setHex(0xffffff) : this.classColor[cls];
       this.pointPos[pc * 3] = v.x;
       this.pointPos[pc * 3 + 1] = 3;

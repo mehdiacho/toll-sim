@@ -4,6 +4,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { buildWorld } from "./world.js";
 import { VehicleLayer, CLASS_INFO } from "./vehicles.js";
+import { classLen, frontToCentre } from "./vehicle-geometry.js";
 import { Sky } from "./sky.js";
 import { Feed } from "./feed.js";
 import { footerHtml, esc, money, plateHtml, STATUS_LABEL, REASON_LABEL, METHOD_LABEL } from "./ui.js";
@@ -384,8 +385,8 @@ export async function mountViewer(root) {
       if (!p) continue;
       const info = reg.get(id);
       const cls = info?.cls ?? "1";
-      let X = p[1];
-      let Y = p[2];
+      // the feed gives the front bumper; everything below works on the centre
+      let [X, Y] = frontToCentre(p[1], p[2], p[3], classLen(cls));
       const ctx = plazaContext(X, Y, p[3]);
       if (ctx) {
         let vv = ctx.v;
