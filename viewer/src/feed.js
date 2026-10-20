@@ -40,7 +40,10 @@ export function decodeReplay(data) {
     }
     pos.clear();
     for (const [k, v] of next) pos.set(k, v);
-    frames.push({ t: f.t, vehicles, spawn: f.s, gone: f.g, events: f.e, stats: f.st });
+    const frame = { t: f.t, vehicles, spawn: f.s, gone: f.g, events: f.e, stats: f.st };
+    if (f.b) frame.booms = f.b;
+    if (f.o) frame.lanes_open = f.o;
+    frames.push(frame);
   }
   // Vehicles first seen in a frame have no heading yet: borrow it from the next frame.
   for (let k = 0; k < frames.length; k++) {
