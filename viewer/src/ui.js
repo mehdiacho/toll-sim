@@ -36,7 +36,15 @@ export const STATUS_LABEL = {
 };
 
 export const REASON_LABEL = {
-  insufficient_funds: "low balance",
+  insufficient_funds: "insufficient funds",
   unregistered_vehicle: "not registered",
   account_inactive: "account inactive",
+};
+
+export const METHOD_LABEL = {
+  tag: "Tag",
+  cash: "Cash",
+  card: "Card",
+  plate: "Plate",
+  runner: "Runner",
 };

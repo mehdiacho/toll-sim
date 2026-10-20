@@ -455,27 +455,83 @@ Routes use the hash, so the site works from any static host:
   the 3D view and the operations dashboard (`/projects/toll-sim/live/dashboard`),
   and "Source on request".
 - `#/live` is the 3D view of the A1. It draws the road from the exported SUMO
-  network, interpolates vehicles between frames, lights the scene for the current
-  time in Botswana (UTC+2, sun position and night lighting included), and flashes
-  the gantry portal on every read. It has an event ticker, a click-to-inspect
-  vehicle card, and overview, follow, gantry and director cameras.
+  network, interpolates vehicles between frames and lights the scene for the current
+  time in Botswana (UTC+2, sun position and night lighting included). It has an event
+  ticker with the payment method and lane, a click-to-inspect vehicle card, a plaza
+  panel, and overview, follow, plaza and director cameras.
+
+**Toll plazas.** Mmamashia, Artesia and Dibete are drawn as mainline plazas in the
+style of South African ones such as Pumulani on the N1, or Swartruggens and Marikana
+on the N4:
+
+- **Approach:** 2 km, 1 km and 500 m countdown signs, a tariff board (classes 1 to 4
+  in pula, "Tags, Cash, Cards"), speed limits stepping 120, 80, 60, 40, and rumble
+  strips.
+- **Apron:** the carriageway flares to five lanes each way over about 250 m and
+  tapers back after the booms.
+- **Canopy:** one long canopy with the plaza name on its roof, lit underneath at
+  night. Over each lane it carries a lane number, an open/closed signal and a
+  lane-type sign (heavy vehicles, tag/cash/card, e-tag only).
+- **Lanes:** booth islands to the right of each lane with chevron crash cushions, a
+  red-and-white boom, a small traffic light and a fare display ("P 15.00",
+  "Thank you", "Insufficient funds").
+- **Equipment and buildings:** tag antennas and cameras, axle sensors, high masts
+  and an admin building with a car park.
+
+Static parts are merged per material and the booms, signals and lamps are
+instanced, so the view stays light on a phone. The layout lives in
+`viewer/src/plaza-layout.js`, which the replay generator shares.
 
 **Data.** The viewer subscribes to the SSE stream at
 `/projects/toll-sim/live/live/stream`. If the stream doesn't answer within a few
 seconds, or the bridge says it isn't live, the viewer plays `viewer/public/replay.json`
 instead, and probes for the live stream about once a minute. The HUD badge shows
-**Live** or **Replay**. The replay is a synthetic five-minute recording, about
-1.1 MB delta-encoded, made by `npm run replay` (`viewer/scripts/make-replay.mjs`).
-Traffic keeps left, as it does in Botswana. `road.json` is copied from `live/road.json`
-at build time.
+**Live** or **Replay**.
+
+The replay is a synthetic five-minute recording, about 1.25 MB delta-encoded, made by
+`npm run replay` (`viewer/scripts/make-replay.mjs`). In it, vehicles:
+
+- slow down on the approach;
+- pick a lane by how they pay: e-tag lane if tagged, heavy lanes for trucks and
+  buses, mixed otherwise;
+- queue, and stop for about 4 s with a tag in a mixed lane, or 8 to 12 s for cash
+  or a card;
+- roll through e-tag lanes at walking pace;
+- now and then hit "Insufficient funds" on a tag and pay by card instead.
+
+Traffic keeps left, as it does in Botswana. `road.json` is copied from
+`live/road.json` at build time.
+
+**Plaza fields.** Every field is optional, and the viewer works without them:
+
+- road.json `plazas[]`: `id, name, km, x, y, heading` and
+  `lanes[{dir, idx, type, x, y, w}]`. Without it, the viewer derives one plaza per
+  gantry with five lanes each way: two heavy, two mixed and one e-tag.
+- Frame `events[]` items: `plaza`, `lane` and `method` (tag, cash, card, plate,
+  runner).
+- `stats.plazas[id]`: `{open, queue, wait_s, by_method}`.
+- `booms`: `[[plazaId, dir, laneIdx, 0|1]]`.
+- `lanes_open`: `{[plazaId]: {N: [idx], S: [idx]}}`.
+
+When the feed carries none of these, the viewer steers vehicles into lanes itself,
+lifts booms as they pass and estimates queues and waits locally. Lanes open follow
+the time of day.
 
 **URL options** for links and captures:
-`#/live?cam=overview|follow|free|gantry:A1-G01:N&time=auto|day|dusk|night|HH:MM&replay`.
-`replay` skips the live stream.
+`#/live?cam=overview|follow|free|plaza:A1-G01:overview|booths|canopy&time=auto|day|dusk|night|HH:MM&replay`.
+`replay` skips the live stream. Old `gantry:ID` links open that plaza's overview.
 
-Screenshots and a short clip are in `docs/portfolio/`: `cover.png` (1600x900),
-`landing.png`, `overview.png`, `follow.png`, `gantry-read.png`, `night.png`,
-`mobile.png`, and `clip.mp4` / `clip.webm`.
+**Captures.** Screenshots and a short clip are in `docs/portfolio/`:
+
+- `cover.png` (1600x900, Mmamashia at dusk with queues);
+- `landing.png`, `overview.png`, `plaza-booths.png`, `canopy-night.png`,
+  `follow.png` and `mobile.png`;
+- `clip.mp4` / `clip.webm` (27 s).
+
+To refresh them, build, run `npx vite preview --port 4187 --strictPort`, then run
+`node scripts/capture.mjs`. The script uses headless Chrome and ffmpeg. Set
+`PLAYWRIGHT_CORE` to an installed `playwright-core` folder if it isn't resolvable,
+and `CHROME_PATH` if Chrome isn't in the usual place.
 
 ## Layout
 

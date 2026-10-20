@@ -8,8 +8,8 @@ const CARDS = [
     "SUMO drives a few hundred vehicles over the real A1 between Gaborone and Mahalapye, imported from OpenStreetMap. Cars, buses, trucks and trailers keep their own speeds and queue behind each other on the single-carriageway stretches.",
   ],
   [
-    "Gantries",
-    "Three free-flow gantries at Mmamashia, Artesia and Dibete. No booths and no barriers: each portal carries a tag reader and a plate camera over every lane.",
+    "Toll plazas",
+    "Three mainline plazas at Mmamashia, Artesia and Dibete, laid out like the N1 and N4 plazas in South Africa: the road flares to five lanes each way under a lit canopy, with heavy-vehicle, mixed and e-tag lanes, booths, booms and a tag reader and plate camera in every lane.",
   ],
   [
     "Plate reading",
@@ -26,10 +26,10 @@ const CARDS = [
 ];
 
 const STEPS = [
-  ["Pass", "A vehicle drives under a gantry at road speed."],
-  ["Read", "The tag reader and the plate camera both fire."],
+  ["Arrive", "A vehicle picks a lane at the plaza: e-tag, mixed or heavy."],
+  ["Read", "The tag reader and the plate camera fire as it reaches the boom."],
   ["Match", "The read is matched to an account, by tag if there is one."],
-  ["Charge", "The class tariff comes off the prepaid balance."],
+  ["Charge", "The class tariff comes off the prepaid balance, or is paid in cash or by card at the booth. The boom lifts."],
   ["Follow up", "No account or no money: an unpaid passage with a grace period."],
 ];
 
@@ -57,7 +57,7 @@ async function corridorSvg(el) {
       d += seg;
     }
     const seen = new Set();
-    const gantries = road.gantries
+    const gantries = (road.plazas?.length ? road.plazas : road.gantries)
       .filter((g) => !seen.has(g.id) && seen.add(g.id))
       .map((g, i) => {
         const [x, y] = P(g.x, g.y);
@@ -73,7 +73,7 @@ async function corridorSvg(el) {
         return `<g class="p"><rect x="${x - 3}" y="${y - 3}" width="6" height="6"/><text x="${south ? x + 10 : x - 10}" y="${south ? y + 14 : y + 4}" text-anchor="${south ? "start" : "end"}">${esc(p.name)}</text></g>`;
       })
       .join("");
-    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Map of the A1 corridor from Gaborone to Mahalapye with the three toll gantries">
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Map of the A1 corridor from Gaborone to Mahalapye with the three toll plazas">
       <path class="road-glow" d="${d}"/><path class="road" d="${d}"/><path class="road-flow" d="${d}"/>${places}${gantries}</svg>
       <p class="map-credit">Road network © OpenStreetMap contributors (ODbL)</p>`;
   } catch {
@@ -91,11 +91,11 @@ export function mountLanding(root) {
     <main>
       <section class="hero">
         <div class="hero-text">
-          <p class="eyebrow">Botswana · A1 · simulated free-flow tolling</p>
+          <p class="eyebrow">Botswana · A1 · simulated toll plazas</p>
           <h1>A1 Toll Simulator</h1>
           <p class="lead">
             A working model of an electronic toll on the A1 from Gaborone to Mahalapye.
-            Simulated traffic drives the real road network, gantries read tags and number plates,
+            Simulated traffic drives the real road network and queues at three toll plazas, where tags, cash and cards are taken,
             and a back office matches every read to an account and settles it from a mobile-money wallet.
           </p>
           <div class="cta">

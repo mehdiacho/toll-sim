@@ -3,15 +3,25 @@
 // simulation is not running.
 //
 // Vehicles drive the lane polylines of live/road.json in both directions with
-// a simple car-following and overtaking model; gantry reads are emitted when a
-// vehicle crosses a gantry. Usage: node scripts/make-replay.mjs [minutes]
+// a simple car-following and overtaking model. At each toll plaza they slow
+// down for the speed limits, spread into the plaza lanes by how they pay
+// (e-tag vehicles to the e-tag lane, heavy vehicles to the heavy lanes, the
+// rest to the mixed lanes), queue, stop at the booth (about 4 s for a tag in a
+// mixed lane, 8 to 12 s for cash or a card), and leave when the boom lifts.
+// E-tag lanes take vehicles rolling at walking pace. Now and then a tag is
+// declined for insufficient funds and the driver pays by card instead.
+// The plaza layout comes from src/plaza-layout.js, shared with the 3D view.
 //
-// Output format (decoded by src/replay.js):
-//   { v, kind, dt, clock0, gantries, frames: [{ t, s, g, e, st, p }] }
+// Usage: node scripts/make-replay.mjs [minutes]
+//
+// Output format (decoded by src/feed.js):
+//   { v, kind, dt, clock0, frames: [{ t, s, g, e, st, p, b?, o? }] }
 //   s  = spawn  [[id, plate, class, flags]]
 //   g  = gone   [id]
-//   e  = gantry events (same objects as the live feed)
-//   st = cumulative stats
+//   e  = toll events (same objects as the live feed: plaza, lane, method, ...)
+//   st = cumulative stats, with st.plazas = { id: { open, queue, wait_s, by_method } }
+//   b  = boom changes in this frame [[plazaId, dir, laneIdx, 0|1]]
+//   o  = lanes open { plazaId: { N: [idx], S: [idx] } } (first frame only)
 //   p  = flat ints, vehicles sorted by id: [idDelta, x, y] where x/y are in
 //        decimetres, absolute for a vehicle new to this frame, otherwise the
 //        delta from its previous frame. Heading and speed are derived from the
@@ -20,6 +30,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as PL from "../src/plaza-layout.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const road = JSON.parse(readFileSync(resolve(here, "../../live/road.json"), "utf8"));
@@ -28,7 +39,7 @@ const OUT = resolve(here, "../public/replay.json");
 const MINUTES = Number(process.argv[2] ?? 5);
 const DT = 0.5; // integration step, s
 const FRAME = 2; // frame interval, s
-const WARMUP = 90; // s simulated before recording starts
+const WARMUP = 150; // s simulated before recording starts
 const DURATION = MINUTES * 60;
 
 // ---------------------------------------------------------------- random
@@ -149,22 +160,56 @@ function project(route, x, y) {
   return best && best.d < 40 ? best.s : null;
 }
 
-// Gantries: where each one sits along each route it covers.
-const gates = [];
-for (const g of road.gantries) {
-  for (const r of routes) {
-    if (!g.dir.includes(r.dir)) continue;
-    const s = project(r, g.x, g.y);
-    if (s == null) continue;
-    gates.push({ id: g.id, name: g.name, dir: r.dir, route: r, s });
+// ---------------------------------------------------------------- plazas
+const plazas = PL.plazasFrom(road);
+// Lanes open in the recording: everything at the busy Mmamashia plaza, one
+// mixed lane each way shut at the two quieter plazas.
+const OPEN = {};
+for (const p of plazas) {
+  OPEN[p.id] = {};
+  for (const dir of ["N", "S"]) {
+    const lanes = p.lanes.filter((l) => l.dir === dir);
+    const shut = p.name === "Mmamashia" ? [] : lanes.filter((l) => l.type === "mixed").slice(0, 1).map((l) => l.idx);
+    OPEN[p.id][dir] = lanes.filter((l) => !shut.includes(l.idx)).map((l) => l.idx);
   }
 }
-console.log("gates", gates.map((g) => `${g.id}/${g.dir}@${(g.s / 1000).toFixed(1)}km`).join(" "));
+const gates = [];
+for (const p of plazas) {
+  for (const r of routes) {
+    const s = project(r, p.x, p.y);
+    if (s == null) continue;
+    gates.push({ plaza: p, dir: r.dir, route: r, s, lanes: p.lanes.filter((l) => l.dir === r.dir && OPEN[p.id][r.dir].includes(l.idx)) });
+  }
+}
+console.log("plazas", gates.map((g) => `${g.plaza.id}/${g.dir}@${(g.s / 1000).toFixed(1)}km`).join(" "));
+
+/** The plaza a vehicle at arc length s is approaching or leaving, with t along its lane. */
+function gateAt(route, s) {
+  for (const g of gates) {
+    if (g.route !== route) continue;
+    const t = s - g.s;
+    if (t > PL.ZONE[0] - 1200 && t < PL.ZONE[1]) return { g, t };
+  }
+  return null;
+}
 
 // Towns slow traffic down.
 const towns = road.places.filter((p) => p.name === "Gaborone" || p.name === "Mahalapye");
 function speedCap(x, y) {
   for (const t of towns) if (Math.hypot(x - t.x, y - t.y) < 5000) return 60 / 3.6;
+  return Infinity;
+}
+
+/** The posted limits on a plaza approach and just after the booms, m/s. */
+function plazaCap(t, lane) {
+  if (t < -1400) return Infinity;
+  if (t < -880) return 120 / 3.6;
+  if (t < -430) return 80 / 3.6;
+  if (t < -215) return 60 / 3.6;
+  if (t < -45) return 40 / 3.6;
+  if (t < PL.BOOM_T + 2) return (lane?.type === "etag" ? 16 : 22) / 3.6;
+  if (t < 60) return 40 / 3.6;
+  if (t < 200) return 80 / 3.6;
   return Infinity;
 }
 
@@ -177,7 +222,6 @@ const CLASSES = [
   ["4", 0.09, 18, [70, 85]],
   ["M", 0.03, 2.2, [85, 120]],
 ];
-const TARIFF = { M: 800, 1: 1500, 2: 3500, 3: 6000, 4: 9000 };
 const LETTERS = "ABCDEFGHJKLMNPRSTUVWXYZ";
 const usedPlates = new Set();
 function plate() {
@@ -191,11 +235,15 @@ function plate() {
 }
 
 let nextId = 1;
+let clock = 0;
+let recording = false;
 const vehicles = [];
 const spawnQueue = [];
 const goneQueue = [];
 const eventQueue = [];
+const boomQueue = [];
 const stats = { charged: 0, unpaid: 0, review: 0, insufficient_funds: 0, unregistered_vehicle: 0, revenue_thebe: 0 };
+const pstats = Object.fromEntries(plazas.map((p) => [p.id, { by_method: { tag: 0, cash: 0, card: 0 }, waits: [] }]));
 
 function makeVehicle(route, s, inRecording) {
   let u = rnd();
@@ -222,8 +270,9 @@ function makeVehicle(route, s, inRecording) {
     lat: 0,
     plate: plate(),
     flags: (registered ? 1 : 0) | (tagged ? 2 : 0),
-    // Whether this vehicle's account has run dry (stable per vehicle).
-    broke: rnd() < 0.05,
+    // Whether this vehicle's tag account has run dry (stable per vehicle).
+    broke: tagged && rnd() < 0.07,
+    pz: null, // { g, lane, state, until, method, ... } while at a plaza
   };
   v.v = v.vdes * between(0.9, 1);
   vehicles.push(v);
@@ -231,17 +280,18 @@ function makeVehicle(route, s, inRecording) {
   return v;
 }
 
-// Initial population: a steady flow everywhere plus commuter traffic around Gaborone.
+// Initial population: a steady flow everywhere, commuter traffic around
+// Gaborone and a denser stream upstream of each plaza, so that a few minutes of
+// recording carry a steady stream of transactions.
 const gab = road.places.find((p) => p.name === "Gaborone");
 for (const r of routes) {
   for (let s = 50; s < r.len - 50; ) {
     const p = at(r, s);
     const km = Math.hypot(p.x - gab.x, p.y - gab.y) / 1000;
-    // Busier just upstream of each gantry so that a few minutes of recording
-    // carries a steady stream of reads.
-    const upstream = gates.some((g) => g.route === r && g.s - s > 300 && g.s - s < 9000);
-    const perKm = 0.7 + 6 * Math.exp(-km / 22) + (upstream ? 2.6 : 0);
-    s += expo(perKm / 1000) + 25;
+    const up = gates.find((g) => g.route === r && g.s - s > 200 && g.s - s < 13500);
+    const boost = up ? (up.plaza.name === "Mmamashia" ? 9 : 3.4) : 0;
+    const perKm = 0.5 + 4 * Math.exp(-km / 18) + boost;
+    s += expo(perKm / 1000) + 22;
     if (s < r.len - 50) makeVehicle(r, s, false);
   }
 }
@@ -249,48 +299,154 @@ console.log("initial vehicles", vehicles.length);
 
 function arrivalRate(route) {
   // vehicles / s entering at the route start
-  return route.dir === "N" ? 0.17 : 0.035;
+  return route.dir === "N" ? 0.15 : 0.035;
 }
 const nextArrival = new Map(routes.map((r) => [r, expo(arrivalRate(r))]));
 
-function read(v, gate, clock) {
-  const registered = v.flags & 1;
+// ---------------------------------------------------------------- plaza behaviour
+function laneQueue(g, lane) {
+  let n = 0;
+  for (const o of vehicles) if (o.pz && o.pz.g === g && o.pz.lane === lane && o.pz.state !== "gone") n++;
+  return n;
+}
+
+function chooseLane(v, g) {
+  const heavy = v.cls === "2" || v.cls === "3" || v.cls === "4";
   const tagged = v.flags & 2;
-  const amount = TARIFF[v.cls];
-  let status = "charged";
-  let reason = null;
-  let match = tagged ? "tag" : "plate";
-  let platePrinted = v.plate;
-  if (!registered) {
-    status = "unpaid";
-    reason = "unregistered_vehicle";
-    match = "none";
-  } else if (!tagged && rnd() < 0.05) {
-    status = "review";
-    match = "none";
-    // a low-confidence read: one character off
-    const i = 1 + Math.floor(rnd() * 6);
-    platePrinted = v.plate.slice(0, i) + (rnd() < 0.5 ? "8" : "B") + v.plate.slice(i + 1);
-  } else if (v.broke) {
-    status = "unpaid";
-    reason = "insufficient_funds";
+  let type = heavy ? "heavy" : tagged && rnd() < 0.88 ? "etag" : "mixed";
+  let cands = g.lanes.filter((l) => l.type === type);
+  if (!cands.length) cands = g.lanes.filter((l) => l.type !== "etag");
+  let best = null;
+  for (const l of cands) {
+    const score = laneQueue(g, l) + rnd() * 0.9 + (l.type === "mixed" && type !== "mixed" ? 1 : 0);
+    if (!best || score < best[1]) best = [l, score];
   }
-  stats[status]++;
-  if (reason) stats[reason]++;
-  if (status === "charged") stats.revenue_thebe += amount;
+  // a tagged car facing a long e-tag queue sometimes takes a mixed lane instead
+  if (type === "etag" && best && best[1] > 4) {
+    const alt = g.lanes.filter((l) => l.type === "mixed").map((l) => [l, laneQueue(g, l)]);
+    alt.sort((a, b) => a[1] - b[1]);
+    if (alt.length && alt[0][1] + 1 < best[1]) best = alt[0];
+  }
+  return best[0];
+}
+
+function emit(v, status, method, reason = null) {
+  const pz = v.pz;
+  const amount = PL.TARIFF_THEBE[v.cls];
+  if (!recording) return;
+  stats[status] = (stats[status] ?? 0) + 1;
+  if (reason) stats[reason] = (stats[reason] ?? 0) + 1;
+  if (status === "charged") {
+    stats.revenue_thebe += amount;
+    pstats[pz.g.plaza.id].by_method[method]++;
+  }
   eventQueue.push({
     vid: v.id,
-    gantry: gate.id,
-    dir: gate.dir,
-    plate: platePrinted,
+    gantry: pz.g.plaza.id,
+    plaza: pz.g.plaza.id,
+    dir: pz.g.dir,
+    lane: pz.lane.idx,
+    method,
+    plate: v.plate,
     status,
     amount_thebe: amount,
     reason,
-    match,
+    match: method === "tag" ? "tag" : "booth",
   });
 }
 
-function step(t, recording) {
+function boom(v, up) {
+  const pz = v.pz;
+  if (recording) boomQueue.push([pz.g.plaza.id, pz.g.dir, pz.lane.idx, up ? 1 : 0]);
+}
+
+/** Advance a vehicle's plaza state; returns the arc length it must stop at, or null. */
+function plazaRules(v, g, t) {
+  if (!v.pz && t > -520 && t < -300) {
+    const lane = chooseLane(v, g);
+    const tagged = v.flags & 2;
+    v.pz = { g, lane, state: "approach", method: tagged ? "tag" : rnd() < 0.42 ? "cash" : "card", slow: 0 };
+  }
+  const pz = v.pz;
+  if (!pz || pz.g !== g) return null;
+  const stopS = g.s + PL.BOOM_T - 1.4 - v.length / 2;
+  const front = t + v.length / 2;
+  if (t < PL.BOOM_T && v.v < 3) pz.slow += DT;
+  if (pz.state === "approach") {
+    if (pz.lane.type === "etag" && PL.BOOM_T - front < 11) {
+      if (v.broke) {
+        emit(v, "unpaid", "tag", "insufficient_funds");
+        pz.state = "wait-stop";
+        pz.extra = between(8, 11);
+        pz.after = "card";
+      } else {
+        emit(v, "charged", "tag");
+        pz.state = "opening";
+        pz.until = clock + 0.9;
+        boom(v, true);
+      }
+    } else if (pz.lane.type !== "etag" && stopS - v.s < 0.8 && v.v < 0.4) {
+      pz.state = "service";
+      const m = pz.method;
+      pz.until = clock + (m === "tag" ? between(3.4, 4.6) : m === "cash" ? between(9, 12) : between(8, 11));
+      if (m === "tag" && v.broke) {
+        pz.declineAt = clock + 2.5;
+        pz.until += between(7, 10);
+        pz.after = "card";
+      }
+    }
+  } else if (pz.state === "wait-stop") {
+    if (stopS - v.s < 0.8 && v.v < 0.4) {
+      pz.state = "service";
+      pz.until = clock + pz.extra;
+    }
+  } else if (pz.state === "service") {
+    if (pz.declineAt && clock >= pz.declineAt) {
+      pz.declineAt = null;
+      emit(v, "unpaid", "tag", "insufficient_funds");
+    }
+    if (clock >= pz.until) {
+      emit(v, "charged", pz.after ?? pz.method);
+      pz.state = "opening";
+      pz.until = clock + 0.9; // the boom lifts, then the driver pulls away
+      boom(v, true);
+    }
+  } else if (pz.state === "opening") {
+    if (clock >= pz.until) pz.state = "cleared";
+  } else if (pz.state === "cleared") {
+    if (t - v.length / 2 > PL.BOOM_T + 1.2) {
+      boom(v, false);
+      pz.state = "gone";
+      if (recording) {
+        const w = pstats[g.plaza.id].waits;
+        w.push(pz.slow);
+        if (w.length > 30) w.shift();
+      }
+    }
+  }
+  if (pz.state === "approach" || pz.state === "wait-stop" || pz.state === "service") return stopS;
+  if (pz.state === "opening") return stopS;
+  return null;
+}
+
+/** Lateral position across the plaza (plaza v), blending road lane and plaza lane. */
+function plazaV(v, g, t, X, Y) {
+  const q = PL.toUV(g.plaza, X, Y);
+  if (!v.pz || v.pz.g !== g) return { q, vv: q.v, f: 0 };
+  const f = PL.flare(t);
+  // srcV: the feed's own lane centre, which the viewer maps onto its drawn lanes
+  const target = v.pz.lane.srcV ?? v.pz.lane.v;
+  return { q, vv: q.v + (target - q.v) * f, f };
+}
+
+function roadXY(v) {
+  const p = at(v.route, v.s);
+  return { x: p.x - p.ty * v.lat, y: p.y + p.tx * v.lat, p };
+}
+
+// ---------------------------------------------------------------- step
+function step(t) {
+  clock = t;
   // arrivals
   for (const r of routes) {
     let due = nextArrival.get(r);
@@ -303,16 +459,33 @@ function step(t, recording) {
   }
   for (const r of routes) {
     const list = vehicles.filter((v) => v.route === r).sort((a, b) => a.s - b.s);
+    // plaza context for everyone first, so leaders can be found by lateral position
+    for (const v of list) {
+      const ga = gateAt(r, v.s);
+      v._g = ga;
+      v._vv = null;
+      if (ga && ga.t > PL.FLARE_IN[0] - 10) {
+        const { x, y } = roadXY(v);
+        v._vv = plazaV(v, ga.g, ga.t, x, y).vv;
+      }
+    }
     for (let i = 0; i < list.length; i++) {
       const v = list[i];
       const here = at(r, v.s);
-      const twoLanes = here.n >= 2;
-      if (!twoLanes) v.lane = 0;
+      const ga = v._g;
+      const inPlaza = v._vv != null;
+      const twoLanes = here.n >= 2 && !inPlaza;
+      if (here.n < 2) v.lane = 0;
+      const gapTo = (o) => o.s - v.s - o.length / 2 - v.length / 2;
       // leaders in each lane
       const ahead = (lane) => {
         for (let j = i + 1; j < list.length; j++) {
           const o = list[j];
           if (o.s - v.s > 300) break;
+          if (inPlaza) {
+            if (o._vv != null && Math.abs(o._vv - v._vv) < 2.6) return o;
+            continue;
+          }
           if (!twoLanes || o.lane === lane) return o;
         }
         return null;
@@ -325,39 +498,47 @@ function step(t, recording) {
         }
         return true;
       };
-      const want = Math.min(v.vdes, speedCap(here.x, here.y));
+      let want = Math.min(v.vdes, speedCap(here.x, here.y));
+      let stopS = null;
+      if (ga) {
+        want = Math.min(want, plazaCap(ga.t, v.pz?.g === ga.g ? v.pz.lane : null));
+        stopS = plazaRules(v, ga.g, ga.t);
+      } else if (v.pz) {
+        v.pz = null;
+      }
       const leader = ahead(v.lane);
-      const gapTo = (o) => o.s - v.s - o.length;
-      const safe = (spd) => 8 + spd * 1.4;
+      const safe = (spd) => 2.5 + spd * 1.3;
       let target = want;
-      if (leader) {
+      if (leader && !inPlaza) {
         const gap = gapTo(leader);
-        if (gap < safe(v.v) * 2.2 && leader.v < want - 1) {
+        if (gap < safe(v.v) * 2.2 && leader.v < want - 1 && twoLanes && v.lane === 0 && !(ga && ga.t > -900 && ga.t < 0)) {
           // try to overtake on a dual carriageway
-          if (twoLanes && v.lane === 0) {
-            const l1 = ahead(1);
-            if ((!l1 || gapTo(l1) > safe(v.v) * 2) && behindClear(1, 40)) v.lane = 1;
-          }
-        }
-        const lead2 = ahead(v.lane);
-        if (lead2) {
-          const g = gapTo(lead2);
-          if (g < safe(v.v)) target = Math.min(target, lead2.v * Math.max(0.3, g / safe(v.v)));
-          else if (g < safe(v.v) * 2) target = Math.min(target, lead2.v + (g - safe(v.v)) * 0.15);
+          const l1 = ahead(1);
+          if ((!l1 || gapTo(l1) > safe(v.v) * 2) && behindClear(1, 40)) v.lane = 1;
         }
       }
-      if (v.lane === 1) {
+      const lead2 = ahead(v.lane);
+      if (lead2) {
+        const g = gapTo(lead2);
+        if (g < safe(v.v)) target = Math.min(target, lead2.v * Math.max(0, (g - 1.5) / safe(v.v)));
+        else if (g < safe(v.v) * 2) target = Math.min(target, lead2.v + (g - safe(v.v)) * 0.25);
+        if (g < 1.2) target = 0;
+      }
+      if (stopS != null) {
+        const d = stopS - v.s;
+        target = Math.min(target, d <= 0 ? 0 : Math.sqrt(2 * 1.8 * d));
+      }
+      if (v.lane === 1 && !inPlaza) {
         const l0 = ahead(0);
         if ((!l0 || gapTo(l0) > safe(v.v) * 2.5) && behindClear(0, 25)) v.lane = 0;
       }
-      const acc = target > v.v ? 1.0 : -3.0;
+      if (inPlaza && v.lane === 1 && here.n < 2) v.lane = 0;
+      const acc = target > v.v ? (v.cls === "1" || v.cls === "M" ? 1.6 : 0.9) : -3.5;
       v.v = Math.max(0, acc > 0 ? Math.min(target, v.v + acc * DT) : Math.max(target, v.v + acc * DT));
-      const s0 = v.s;
       v.s += v.v * DT;
-      // ease the lateral offset toward the chosen lane
+      // ease the lateral offset toward the chosen road lane
       const latTarget = -v.lane * 3.2; // overtaking lane is on the right (left-hand traffic)
       v.lat += Math.sign(latTarget - v.lat) * Math.min(Math.abs(latTarget - v.lat), 1.2 * DT);
-      if (recording) for (const g of gates) if (g.route === r && s0 < g.s && v.s >= g.s) read(v, g);
     }
   }
   // exits
@@ -371,23 +552,49 @@ function step(t, recording) {
 }
 
 function position(v) {
-  const p = at(v.route, v.s);
-  // left of travel = (-ty, tx)
-  return [Math.round((p.x - p.ty * v.lat) * 10), Math.round((p.y + p.tx * v.lat) * 10)];
+  const { x, y } = roadXY(v);
+  const ga = gateAt(v.route, v.s);
+  if (ga && v.pz && v.pz.g === ga.g) {
+    const { q, vv } = plazaV(v, ga.g, ga.t, x, y);
+    const [X, Y] = PL.fromUV(ga.g.plaza, q.u, vv);
+    return [Math.round(X * 10), Math.round(Y * 10)];
+  }
+  return [Math.round(x * 10), Math.round(y * 10)];
+}
+
+function plazaStats() {
+  const out = {};
+  for (const p of plazas) {
+    const queue = { N: 0, S: 0 };
+    for (const v of vehicles) {
+      if (!v.pz || v.pz.g.plaza !== p || v.pz.state === "gone" || v.pz.state === "cleared") continue;
+      if (v.v < 2.5) queue[v.pz.g.dir]++;
+    }
+    const ps = pstats[p.id];
+    const w = ps.waits;
+    out[p.id] = {
+      open: { N: OPEN[p.id].N.length, S: OPEN[p.id].S.length },
+      queue,
+      wait_s: w.length ? Math.round((w.reduce((a, b) => a + b, 0) / w.length) * 10) / 10 : null,
+      by_method: { ...ps.by_method },
+    };
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- run
 let t = 0;
-for (; t < WARMUP; t += DT) step(t, false);
+for (; t < WARMUP; t += DT) step(t);
 console.log("after warm-up", vehicles.length);
 
+recording = true;
 const frames = [];
 const last = new Map();
 const firstSpawn = vehicles.map((v) => [v.id, v.plate, v.cls, v.flags]);
 let rec = 0;
 for (let k = 0; k <= DURATION / FRAME; k++) {
   if (k > 0) {
-    for (let i = 0; i < FRAME / DT; i++, t += DT, rec += DT) step(t, true);
+    for (let i = 0; i < FRAME / DT; i++, t += DT, rec += DT) step(t);
   }
   const now = [...vehicles].sort((a, b) => a.id - b.id);
   const p = [];
@@ -402,18 +609,22 @@ for (let k = 0; k <= DURATION / FRAME; k++) {
   }
   last.clear();
   for (const [id, xy] of seen) last.set(id, xy);
-  frames.push({
+  const frame = {
     t: Math.round(rec * 10) / 10,
     s: k === 0 ? firstSpawn : spawnQueue.splice(0).map((v) => [v.id, v.plate, v.cls, v.flags]),
     g: goneQueue.splice(0),
     e: eventQueue.splice(0),
-    st: { ...stats },
+    st: { ...stats, plazas: plazaStats() },
     p,
-  });
+  };
+  const b = boomQueue.splice(0);
+  if (b.length) frame.b = b;
+  if (k === 0) frame.o = OPEN;
+  frames.push(frame);
 }
 
 const out = {
-  v: 1,
+  v: 2,
   kind: "synthetic",
   note: "Synthetic traffic generated by viewer/scripts/make-replay.mjs on the OpenStreetMap A1 network. Not real vehicles.",
   dt: FRAME,
@@ -424,4 +635,10 @@ mkdirSync(dirname(OUT), { recursive: true });
 const json = JSON.stringify(out);
 writeFileSync(OUT, json);
 const events = frames.reduce((n, f) => n + f.e.length, 0);
-console.log(`wrote ${OUT}: ${frames.length} frames, ${events} reads, ${(json.length / 1024).toFixed(0)} KiB`);
+const methods = {};
+for (const f of frames) for (const e of f.e) methods[`${e.method}/${e.status}`] = (methods[`${e.method}/${e.status}`] ?? 0) + 1;
+const maxQ = {};
+for (const f of frames) for (const [id, s] of Object.entries(f.st.plazas)) maxQ[id] = Math.max(maxQ[id] ?? 0, s.queue.N + s.queue.S);
+console.log("transactions", JSON.stringify(methods), "max queue", JSON.stringify(maxQ));
+console.log("final plaza stats", JSON.stringify(frames[frames.length - 1].st.plazas));
+console.log(`wrote ${OUT}: ${frames.length} frames, ${events} events, ${(json.length / 1024).toFixed(0)} KiB`);

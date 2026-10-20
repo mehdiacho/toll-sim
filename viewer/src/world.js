@@ -1,8 +1,10 @@
 // Static scenery built from road.json: ground, asphalt, junctions, markings,
-// gantry portals, labels and a scatter of acacia trees.
+// toll plazas (src/plazas.js), labels and a scatter of acacia trees.
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
+import { buildPlazas } from "./plazas.js";
+import { toUV } from "./plaza-layout.js";
 
 /** SUMO metres -> scene coordinates around a local origin (y up, -z north). */
 export function makeFrame(road) {
@@ -248,6 +250,17 @@ export function buildWorld(road, scene) {
   overviewLines.renderOrder = 2;
   group.add(overviewLines);
 
+  // ---------------------------------------------------------------- plazas
+  const plazas = buildPlazas(road, group, F);
+  // keep trees and bushes off the aprons, car parks and approach signs
+  const clear = (X, Y) =>
+    plazas.list.some((p) => {
+      if (Math.hypot(X - p.x, Y - p.y) > 2600) return false;
+      const { u, v } = toUV(p, X, Y);
+      if (Math.abs(u) < 360 && Math.abs(v) < p.halfWidth + 55) return true;
+      return Math.abs(u) < 2100 && Math.abs(v) < 28;
+    });
+
   // ---------------------------------------------------------------- trees
   const r = rng(42);
   const trunk = tinted(new THREE.CylinderGeometry(0.18, 0.28, 2.4, 5).translate(0, 1.2, 0), 0x5b4632);
@@ -279,6 +292,7 @@ export function buildWorld(road, scene) {
       const X = x + (-(b[1] - a[1]) / L) * off * side;
       const Y = y + ((b[0] - a[0]) / L) * off * side;
       const sc = scaleMin + r() * (scaleMax - scaleMin);
+      if (clear(X, Y)) continue;
       p.set(F.x(X), 0, F.z(Y));
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), r() * Math.PI * 2);
       s.set(sc * (0.8 + r() * 0.4), sc, sc * (0.8 + r() * 0.4));
@@ -298,88 +312,6 @@ export function buildWorld(road, scene) {
   placeAlong(3200, 14, 420, acacia, 0.7, 1.5);
   placeAlong(3800, 9, 260, bush, 0.6, 1.6);
 
-  // ---------------------------------------------------------------- gantries
-  const steel = new THREE.MeshStandardMaterial({ color: 0xc9ced4, roughness: 0.45, metalness: 0.6 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.6, metalness: 0.3 });
-  const gantries = [];
-  // floodlight pools under the portals, faded in at night by the viewer
-  const gc = document.createElement("canvas");
-  gc.width = gc.height = 128;
-  const gx = gc.getContext("2d");
-  const grad = gx.createRadialGradient(64, 64, 2, 64, 64, 64);
-  grad.addColorStop(0, "rgba(255,244,214,0.95)");
-  grad.addColorStop(0.45, "rgba(255,236,196,0.4)");
-  grad.addColorStop(1, "rgba(255,236,196,0)");
-  gx.fillStyle = grad;
-  gx.fillRect(0, 0, 128, 128);
-  const glowTex = new THREE.CanvasTexture(gc);
-  glowTex.colorSpace = THREE.SRGBColorSpace;
-  const glowMat = new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
-  const glowGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-  for (const g of road.gantries) {
-    const portal = new THREE.Group();
-    const half = g.span / 2 + 1.2;
-    const H = 6.6;
-    const post = new THREE.BoxGeometry(0.45, H, 0.45);
-    for (const side of [-1, 1]) {
-      const m = new THREE.Mesh(post, steel);
-      m.position.set(0, H / 2, side * half);
-      m.castShadow = true;
-      portal.add(m);
-      const footing = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.4, 1.1), dark);
-      footing.position.set(0, 0.2, side * half);
-      portal.add(footing);
-    }
-    // lattice beam: two chords
-    for (const dy of [0, 0.9]) {
-      const chord = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, half * 2 + 0.4), steel);
-      chord.position.set(0, H + dy, 0);
-      chord.castShadow = true;
-      portal.add(chord);
-    }
-    // the flashing light bar under the beam
-    const flashMat = new THREE.MeshStandardMaterial({ color: 0x111418, emissive: 0x75aadb, emissiveIntensity: 0.15, roughness: 0.4 });
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.18, half * 2 - 0.6), flashMat);
-    bar.position.set(0, H - 0.25, 0);
-    portal.add(bar);
-    // cameras and tag readers above each lane
-    const n = Math.max(2, g.lanes);
-    for (let i = 0; i < n; i++) {
-      const z = -g.span / 2 + (g.span / n) * (i + 0.5);
-      const cam = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.32, 0.32), dark);
-      cam.position.set(0.25, H - 0.45, z);
-      portal.add(cam);
-      const reader = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.5, 0.5), steel);
-      reader.position.set(-0.2, H + 0.45, z);
-      portal.add(reader);
-    }
-    // the sign panel
-    const sign = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, 1.2, 3.6),
-      new THREE.MeshStandardMaterial({ color: 0x1d5fa8, roughness: 0.5 }),
-    );
-    sign.position.set(0.1, H + 1.7, 0);
-    portal.add(sign);
-
-    const pool = new THREE.Mesh(glowGeo, glowMat);
-    pool.scale.set(30, 1, g.span + 22);
-    pool.position.y = 0.12;
-    pool.renderOrder = 3;
-    portal.add(pool);
-
-    // orient: heading is the travel direction (math convention, SUMO coords);
-    // the portal's local x axis points along the road.
-    portal.position.set(F.x(g.x), 0, F.z(g.y));
-    portal.rotation.y = g.heading; // scene z is -north so math angle maps directly
-    group.add(portal);
-
-    const tag = label(`${g.name} · ${g.id}${g.dir === "NS" ? "" : " " + g.dir}`, "lbl lbl-gantry");
-    tag.position.set(0, H + 3.4, 0);
-    portal.add(tag);
-
-    gantries.push({ ...g, portal, flashMat, flash: 0, label: tag, pos: portal.position.clone() });
-  }
-
   // ---------------------------------------------------------------- places
   const places = road.places.map((p) => {
     const l = label(p.name, "lbl lbl-place");
@@ -388,5 +320,5 @@ export function buildWorld(road, scene) {
     return { ...p, label: l, pos: l.position.clone() };
   });
 
-  return { F, group, gantries, places, overviewLines, ground, glowMat };
+  return { F, group, plazas, places, overviewLines, ground };
 }
