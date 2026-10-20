@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Db, Queryable } from "../db/index.js";
 import { AppError, badRequest, notFound } from "../errors.js";
 import { maskMsisdn, normalizeBotswanaMsisdn } from "../identifiers.js";
-import { createAccount, getAccount } from "./accounts.js";
+import { createAccount, getAccount, registerVehicle } from "./accounts.js";
 import { audit } from "./audit.js";
 import { enqueue } from "./outbox.js";
 
@@ -105,15 +105,64 @@ export async function verifyLogin(db: Db, input: z.infer<typeof verifyLoginInput
     accountId = account.id;
     created = true;
   }
+  const token = await issueSession(db, accountId!, sessionDays, "customer.signed_in", { phone: maskMsisdn(phone), created });
+  return { token, account: await getAccount(db, accountId!), created };
+}
+
+async function issueSession(db: Db, accountId: string, sessionDays: number, action: string, data: Record<string, unknown>) {
   const token = randomBytes(32).toString("base64url");
   await db.tx(async (q) => {
     await q.query(
       `INSERT INTO customer_sessions (token_hash, account_id, expires_at) VALUES ($1, $2, now() + make_interval(days => $3))`,
       [sha256(token), accountId, sessionDays],
     );
-    await audit(q, `customer:${accountId}`, "customer.signed_in", "account", accountId!, { phone: maskMsisdn(phone), created });
+    await audit(q, `customer:${accountId}`, action, "account", accountId, data);
   });
-  return { token, account: await getAccount(db, accountId!), created };
+  return token;
+}
+
+/**
+ * Public demo sign-in: a fresh sandbox account with no phone number, so nobody
+ * types a real one into a site anyone can use. It is given a plate the
+ * simulation has just caught driving unregistered, so the visitor lands on real
+ * trips and a fine to pay; when there is none yet, a new plate with no history.
+ */
+export async function demoSignIn(db: Db, sessionDays: number) {
+  const account = await createAccount(db, { holder_name: "Demo motorist" }, "demo");
+  const { rows: candidates } = await db.query<{ plate: string; vehicle_class: string }>(
+    `SELECT v.plate, p.charged_class AS vehicle_class
+       FROM violations v JOIN passages p ON p.id = v.passage_id
+      WHERE v.status = 'open' AND v.reason = 'unregistered_vehicle' AND v.plate IS NOT NULL
+        AND p.charged_class IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM vehicles x WHERE x.active AND x.plate = v.plate)
+      ORDER BY v.created_at DESC LIMIT 25`,
+  );
+  // Shuffle so two visitors arriving together don't race for the same plate.
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  }
+  let plate: string | null = null;
+  for (const c of candidates.slice(0, 5)) {
+    try {
+      await registerVehicle(db, account.id, { plate: c.plate, vehicle_class: c.vehicle_class }, "demo");
+      plate = c.plate;
+      break;
+    } catch (err: any) {
+      if (err?.code !== "plate_registered" && err?.code !== "23505") throw err;
+    }
+  }
+  while (!plate) {
+    const p = `B${randomInt(100, 1000)}${String.fromCharCode(...[0, 0, 0].map(() => 65 + randomInt(26)))}`;
+    try {
+      await registerVehicle(db, account.id, { plate: p, vehicle_class: "1" }, "demo");
+      plate = p;
+    } catch (err: any) {
+      if (err?.code !== "plate_registered" && err?.code !== "23505") throw err;
+    }
+  }
+  const token = await issueSession(db, account.id, sessionDays, "customer.demo_signed_in", { plate });
+  return { token, account: await getAccount(db, account.id), created: true, demo: true, plate };
 }
 
 /** The account behind a session token, or null. */

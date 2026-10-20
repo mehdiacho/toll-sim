@@ -47,13 +47,39 @@ def main() -> None:
     random.seed(args.seed)
 
     c = json.loads(CORRIDOR.read_text(encoding="utf-8"))
-    nb, sb = c["northbound"], c["southbound"]
     end = int(args.hours * 3600)
+    flows = [(fid, frm, to, vph / 3600) for fid, frm, to, vph in corridor_flows(c, args.scale)]
+
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>', "<routes>", *vtype_lines()]
+    for fid, frm, to, p in sorted(flows):
+        lines.append(
+            f'  <flow id="{fid}" type="mix" begin="0" end="{end}" probability="{p:.5f}" '
+            f'from="{frm}" to="{to}" departLane="best" departSpeed="max"/>'
+        )
+    lines.append("</routes>")
+    OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    vph = sum(p for *_, p in flows) * 3600
+    dist = " ".join(f"{vid}:{share}" for vid, _, share, _ in VTYPES)
+    print(f"wrote {OUT.name}: {len(flows)} flows, ~{vph:.0f} vehicles/hour, {args.hours} h ({dist})")
+
+
+def vtype_lines() -> list[str]:
+    lines = [f'  <vType id="{vid}" vClass="{vclass}" {attrs}/>' for vid, vclass, _, attrs in VTYPES]
+    lines.append(
+        f'  <vTypeDistribution id="mix" vTypes="{" ".join(v[0] for v in VTYPES)}" '
+        f'probabilities="{" ".join(str(v[2]) for v in VTYPES)}"/>'
+    )
+    return lines
+
+
+def corridor_flows(c: dict, scale: float = 1.0) -> list[tuple[str, str, str, float]]:
+    """(id, from edge, to edge, vehicles per hour) for the busy-hour demand."""
+    nb, sb = c["northbound"], c["southbound"]
     flows: list[tuple[str, str, str, float]] = []
 
     def add(fid: str, frm: str, to: str, vph: float) -> None:
         if vph > 0:
-            flows.append((fid, frm, to, vph * args.scale / 3600))
+            flows.append((fid, frm, to, vph * scale))
 
     add("through_N", nb["edges"][0], nb["edges"][-1], THROUGH_VPH)
     add("through_S", sb["edges"][0], sb["edges"][-1], THROUGH_VPH)
@@ -71,21 +97,21 @@ def main() -> None:
     for s, w in zip(stops_s, weights):
         add(f"local_S_{int(s['km'])}", s["edge"], sb["edges"][-1], LOCAL_VPH * w / total)
         add(f"regional_S_{int(s['km'])}", sb["edges"][0], s["edge"], REGIONAL_VPH / len(stops_s))
+    return flows
 
-    lines = ['<?xml version="1.0" encoding="UTF-8"?>', "<routes>"]
-    for vid, vclass, _, attrs in VTYPES:
-        lines.append(f'  <vType id="{vid}" vClass="{vclass}" {attrs}/>')
-    dist = " ".join(f"{vid}:{share}" for vid, _, share, _ in VTYPES)
-    lines.append(f'  <vTypeDistribution id="mix" vTypes="{" ".join(v[0] for v in VTYPES)}" probabilities="{" ".join(str(v[2]) for v in VTYPES)}"/>')
-    for fid, frm, to, p in sorted(flows):
-        lines.append(
-            f'  <flow id="{fid}" type="mix" begin="0" end="{end}" probability="{p:.5f}" '
-            f'from="{frm}" to="{to}" departLane="best" departSpeed="max"/>'
-        )
-    lines.append("</routes>")
-    OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    vph = sum(p for *_, p in flows) * 3600
-    print(f"wrote {OUT.name}: {len(flows)} flows, ~{vph:.0f} vehicles/hour, {args.hours} h ({dist})")
+
+# Share of the busy-hour demand at each hour of the day, Botswana time. Morning
+# and evening peaks around Gaborone, a quiet night with some freight moving.
+DAY_PROFILE = [0.08, 0.05, 0.04, 0.05, 0.10, 0.35, 0.80, 1.00, 0.85, 0.65, 0.60, 0.60,
+               0.65, 0.65, 0.65, 0.75, 0.90, 1.00, 0.80, 0.55, 0.40, 0.30, 0.20, 0.12]
+
+
+def day_factor(hour: float) -> float:
+    """DAY_PROFILE interpolated, for a fractional hour 0..24."""
+    h = hour % 24
+    i = int(h)
+    f = h - i
+    return DAY_PROFILE[i] * (1 - f) + DAY_PROFILE[(i + 1) % 24] * f
 
 
 if __name__ == "__main__":

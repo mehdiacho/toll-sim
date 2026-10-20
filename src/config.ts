@@ -23,6 +23,14 @@ export interface Config {
   customerSessionDays: number;
   /** Development only: return the sign-in code in the API response instead of only "sending" it. */
   exposeLoginCodes: boolean;
+  /** Public demo: GET /dashboard/data needs no key (the numbers are synthetic). */
+  publicDashboard: boolean;
+  /** Public demo: POST /auth/demo hands out a sandbox motorist account. */
+  demoSignin: boolean;
+  /** Behind Cloudflare: take the client address from CF-Connecting-IP / X-Forwarded-For for rate limits. */
+  trustProxy: boolean;
+  /** Most viewers the live 3D feed will stream to at once. */
+  liveMaxClients: number;
 }
 
 export interface EnforcementPolicy {
@@ -68,5 +76,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     disputeWindowDays: Number(env.DISPUTE_WINDOW_DAYS ?? 90),
     customerSessionDays: Number(env.CUSTOMER_SESSION_DAYS ?? 30),
     exposeLoginCodes: env.EXPOSE_LOGIN_CODES === "1",
+    publicDashboard: env.PUBLIC_DASHBOARD === "1",
+    demoSignin: env.DEMO_SIGNIN === "1",
+    trustProxy: env.TRUST_PROXY === "1",
+    liveMaxClients: Number(env.LIVE_MAX_CLIENTS ?? 300),
   };
 }

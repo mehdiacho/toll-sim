@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
@@ -6,6 +7,7 @@ import { z, ZodError } from "zod";
 import type { Config } from "./config.js";
 import type { Db } from "./db/index.js";
 import { AppError } from "./errors.js";
+import { LiveHub, liveFrameInput, RateLimiter } from "./live.js";
 import { PROVIDERS, verifyCallbackSignature, type PaymentGateway } from "./payments/gateway.js";
 import {
   accountStatusInput,
@@ -21,6 +23,7 @@ import {
 import { verifyAuditChain } from "./services/audit.js";
 import {
   assertMyViolation,
+  demoSignIn,
   logout,
   myNotices,
   myPassages,
@@ -70,6 +73,8 @@ export interface AppDeps {
   gateway: PaymentGateway;
   config: Config;
   logger?: boolean;
+  /** Shared with the server so it can close the streams on shutdown. */
+  live?: LiveHub;
 }
 
 type Role = "admin" | "ingest";
@@ -90,8 +95,29 @@ const bearer = (req: FastifyRequest) => {
   return h.startsWith("Bearer ") ? h.slice(7) : "";
 };
 
-export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
+export function buildApp({ db, gateway, config, logger = false, live = new LiveHub(config.liveMaxClients) }: AppDeps) {
   const app = Fastify({ logger, bodyLimit: 8 * 1024 * 1024 });
+  app.addHook("onClose", async () => live.close());
+
+  // Rate limits for what a public visitor can reach. The client address comes
+  // from Cloudflare's header when the app is told it sits behind the tunnel.
+  const clientIp = (req: FastifyRequest) =>
+    (config.trustProxy && (header(req, "cf-connecting-ip") || header(req, "x-forwarded-for")?.split(",")[0]?.trim())) || req.ip;
+  const limited = (limiter: RateLimiter) => async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!limiter.allow(clientIp(req))) {
+      return reply.code(429).send({ error: "rate_limited", message: "too many requests; slow down and try again in a minute" });
+    }
+  };
+  const demoLimit = limited(new RateLimiter(5, 60 * 60_000));
+  const codeLimit = limited(new RateLimiter(20, 60 * 60_000));
+  const writeLimiter = new RateLimiter(60, 60_000);
+  app.addHook("onRequest", async (req, reply) => {
+    if (req.method === "GET" || req.method === "HEAD") return;
+    if (!req.url.startsWith("/me") && !req.url.startsWith("/auth")) return;
+    if (!writeLimiter.allow(clientIp(req))) {
+      return reply.code(429).send({ error: "rate_limited", message: "too many requests; slow down and try again in a minute" });
+    }
+  });
 
   // Keep the raw body: provider callbacks are signed over the exact bytes sent.
   app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
@@ -317,7 +343,12 @@ export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
   app.get("/passages/:id/image", admin, async (req, reply) => sendImage(reply, await getPassageImage(db, idParam.parse(req.params).id)));
 
   // --- customer app ------------------------------------------------------------
-  app.post("/auth/code", async (req) => startLogin(db, startLoginInput.parse(req.body).phone, config.exposeLoginCodes));
+  app.post("/auth/demo", { preHandler: demoLimit }, async (req, reply) => {
+    if (!config.demoSignin) return reply.code(404).send({ error: "not_found", message: "demo sign-in is not enabled here" });
+    return demoSignIn(db, Math.min(config.customerSessionDays, 7));
+  });
+  app.get("/auth/options", async () => ({ demo: config.demoSignin, sms: !config.demoSignin || config.exposeLoginCodes }));
+  app.post("/auth/code", { preHandler: codeLimit }, async (req) => startLogin(db, startLoginInput.parse(req.body).phone, config.exposeLoginCodes));
   app.post("/auth/verify", async (req) => verifyLogin(db, verifyLoginInput.parse(req.body), config.customerSessionDays));
   app.post("/auth/logout", customer, async (req) => {
     await logout(db, bearer(req));
@@ -413,14 +444,71 @@ export function buildApp({ db, gateway, config, logger = false }: AppDeps) {
   // The motorist app: one page that talks to /auth and /me.
   app.get("/app", page("customer", "index.html"));
   app.get("/app/manifest.webmanifest", page("customer", "manifest.webmanifest", "application/manifest+json"));
-  app.get("/dashboard/data", admin, async (req) => {
+  app.get("/dashboard/data", config.publicDashboard ? {} : admin, async (req) => {
     const { window_minutes } = z
       .object({ window_minutes: z.coerce.number().int().min(5).max(24 * 60).default(60) })
       .parse(req.query);
     return dashboardSnapshot(db, window_minutes);
   });
 
+  // --- live 3D view ------------------------------------------------------------
+  // The simulation pushes frames with the ingest key; anyone can watch.
+  app.post("/live/frame", { preHandler: requireRole("ingest", "admin") }, async (req) => {
+    live.publish(liveFrameInput.parse(req.body));
+    return { ok: true, watchers: live.watchers };
+  });
+  app.get("/live/stream", async (req, reply) => live.stream(req, reply));
+  app.get("/live/snapshot", async () => live.snapshot());
+  app.get("/live/summary", async () => liveSummary());
+  app.get("/live", page("live", "index.html"));
+  app.get("/live/road.json", page("live", "road.json", "application/json"));
+  app.get("/live/vendor/three.module.min.js", vendor("three/build/three.module.min.js"));
+  app.get("/live/vendor/three.core.min.js", vendor("three/build/three.core.min.js"));
+  app.get("/live/vendor/OrbitControls.js", vendor("three/examples/jsm/controls/OrbitControls.js"));
+
+  // Small headline numbers for the live view and the project page, cached briefly.
+  let summary: { at: number; data: unknown } | null = null;
+  async function liveSummary() {
+    if (summary && Date.now() - summary.at < 10_000) return summary.data;
+    const { rows } = await db.query(
+      `SELECT
+         (SELECT count(*) FROM passages WHERE passed_at >= $1)::int AS passages_today,
+         (SELECT coalesce(sum(amount_thebe), 0) FROM passages WHERE passed_at >= $1 AND status = 'charged')::bigint AS revenue_today_thebe,
+         (SELECT count(*) FROM passages WHERE passed_at >= now() - interval '1 hour')::int AS passages_last_hour,
+         (SELECT count(*) FROM violations WHERE status = 'open')::int AS open_violations,
+         (SELECT count(*) FROM plate_reviews WHERE status = 'open')::int AS open_reviews,
+         (SELECT count(*) FROM disputes WHERE status = 'open')::int AS open_disputes,
+         (SELECT count(*) FROM accounts)::int AS accounts,
+         (SELECT count(*) FROM vehicles WHERE active)::int AS vehicles,
+         (SELECT count(*) FROM passages)::bigint AS passages_total`,
+      [startOfBotswanaDay()],
+    );
+    const data = { ...Object.fromEntries(Object.entries(rows[0]).map(([k, v]) => [k, Number(v)])), watchers: live.watchers };
+    summary = { at: Date.now(), data };
+    return data;
+  }
+
+  // The project page.
+  app.get("/", page("site", "index.html"));
+
   return app;
+}
+
+/** Midnight in Botswana (UTC+2 all year, no daylight saving) as an instant. */
+function startOfBotswanaDay(now = Date.now()) {
+  const shifted = new Date(now + 2 * 3600_000);
+  shifted.setUTCHours(0, 0, 0, 0);
+  return new Date(shifted.getTime() - 2 * 3600_000);
+}
+
+/** Serves one file from node_modules (three.js for the live view), cached for a day. */
+function vendor(path: string) {
+  const require = createRequire(import.meta.url);
+  let body: Buffer | null = null;
+  return async (_req: FastifyRequest, reply: FastifyReply) => {
+    body ??= readFileSync(require.resolve(path));
+    return reply.type("text/javascript; charset=utf-8").header("cache-control", "public, max-age=86400").send(body);
+  };
 }
 
 /** Finds a static folder of the repo (dashboard/, customer/) whether running from src/ (tsx) or dist/ (node). */
