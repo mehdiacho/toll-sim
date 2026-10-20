@@ -30,7 +30,7 @@ export async function mountViewer(root) {
         <a class="brand" href="#/" aria-label="Back to the overview">A1 Toll Simulator</a>
         <div class="status">
           <span class="badge" id="badge"><i></i><b>Connecting</b></span>
-          <span class="clock" id="clock">--:--:--</span>
+          <span class="clock"><span id="day"></span> <span id="clock">--:--:--</span></span>
         </div>
         <dl class="stats" id="stats">
           <div><dt>Vehicles</dt><dd id="s-veh">0</dd></div>
@@ -195,10 +195,18 @@ export async function mountViewer(root) {
       ${plateHtml(e.plate)}
       <span class="where">${esc(g ? g.name : e.gantry)} <small>${esc(e.dir ?? "")}</small></span>
       <span class="amt">${e.amount_thebe != null ? money(e.amount_thebe) : ""}</span>
-      ${e.reason ? `<span class="why">${esc(REASON_LABEL[e.reason] ?? e.reason)}</span>` : e.match ? `<span class="why">via ${esc(e.match)}</span>` : ""}`;
+      ${
+        e.reason
+          ? `<span class="why">${esc(REASON_LABEL[e.reason] ?? e.reason)}</span>`
+          : st === "review"
+            ? `<span class="why">low-confidence read, to a person</span>`
+            : e.match && e.match !== "none"
+              ? `<span class="why">matched by ${esc(e.match)}</span>`
+              : ""
+      }`;
     const ol = $("events");
     ol.prepend(li);
-    while (ol.children.length > 7) ol.lastChild.remove();
+    while (ol.children.length > 5) ol.lastChild.remove();
     eventLog.push(e);
     if (eventLog.length > 50) eventLog.shift();
     if (flash && g) {
@@ -208,9 +216,9 @@ export async function mountViewer(root) {
       el.className = `pop st-${st}`;
       el.innerHTML = `${plateHtml(e.plate)}<span>${esc(STATUS_LABEL[st] ?? st)} ${e.amount_thebe != null ? money(e.amount_thebe) : ""}</span>`;
       const obj = new CSS2DObject(el);
-      obj.position.copy(g.pos).add(new THREE.Vector3(0, 12, 0));
+      obj.position.copy(g.pos).add(new THREE.Vector3(0, 15, 0));
       scene.add(obj);
-      pops.push({ obj, born: performance.now() });
+      pops.push({ obj, born: performance.now(), g });
       lastReadGantry = g;
       lastReadAt = performance.now();
     }
@@ -303,10 +311,12 @@ export async function mountViewer(root) {
   }
 
   function overviewShot(dur = 1.8) {
-    const span = Math.max(road.bounds[2] - road.bounds[0], road.bounds[3] - road.bounds[1]);
+    // look up the corridor from the south-west so its whole length fits
+    const len = Math.hypot(road.bounds[2] - road.bounds[0], road.bounds[3] - road.bounds[1]);
     const narrow = camera.aspect < 0.9;
-    const dist = span * (narrow ? 1.05 : 0.62) / Math.tan((camera.fov * Math.PI) / 360) * 0.75;
-    moveTo(new THREE.Vector3(-span * 0.18, dist * 0.82, dist * 0.55), new THREE.Vector3(0, 0, 0), dur);
+    const fit = (len * 0.5) / Math.tan((camera.fov * Math.PI) / 360) / Math.min(1.25, Math.max(0.5, narrow ? camera.aspect * 1.6 : 1));
+    const d = fit * (narrow ? 1.0 : 0.95);
+    moveTo(new THREE.Vector3(3000 - d * 0.22, d * 0.6, 22000 + d * 0.72), new THREE.Vector3(3000, 0, 22000), dur);
   }
 
   function aerialShot(place) {
@@ -319,8 +329,8 @@ export async function mountViewer(root) {
     // stand on the verge ~45 m upstream of the portal, looking at it
     const h = g.heading;
     const along = new THREE.Vector3(Math.cos(h), 0, -Math.sin(h));
-    const side = new THREE.Vector3(Math.sin(h), 0, Math.cos(h)); // right of travel
-    const pos = g.pos.clone().addScaledVector(along, -48).addScaledVector(side, 16).add(new THREE.Vector3(0, 9, 0));
+    const side = new THREE.Vector3(-Math.sin(h), 0, -Math.cos(h)); // left of travel: the near verge
+    const pos = g.pos.clone().addScaledVector(along, -36).addScaledVector(side, 12).add(new THREE.Vector3(0, 6.5, 0));
     moveTo(pos, g.pos.clone().add(new THREE.Vector3(0, 3.5, 0)), dur);
   }
 
@@ -666,7 +676,7 @@ export async function mountViewer(root) {
     camera.near = Math.max(0.3, Math.min(height, distT) / 60);
     camera.far = Math.max(40000, height * 6 + distT * 3);
     camera.updateProjectionMatrix();
-    scene.fog.density = 1.6 / (height * 22 + distT * 4 + 6000);
+    scene.fog.density = 1.6 / (height * 4 + distT * 1.5 + 6000);
 
     // lighting
     focus.copy(controls.target);
@@ -691,9 +701,14 @@ export async function mountViewer(root) {
         g.flashMat.emissive.setHex(0x75aadb);
         g.flashMat.emissiveIntensity = 0.15 + night * 0.8;
       }
-      g.label.visible = camera.position.distanceTo(g.pos) < 25000;
+      const popping = pops.some((p) => p.g === g && p.obj.visible);
+      g.label.visible = !popping && (camera.position.distanceTo(g.pos) < 25000 || (far > 0.5 && g.dir !== "S"));
     }
-    for (const p of world.places) p.label.visible = alt > 300 && camera.position.distanceTo(p.pos) < 160000;
+    world.glowMat.opacity = night * 0.75;
+    for (const p of world.places) {
+      const nearGantry = far > 0.5 && world.gantries.some((g) => g.name === p.name);
+      p.label.visible = alt > 300 && !nearGantry && camera.position.distanceTo(p.pos) < 420000;
+    }
     for (let i = pops.length - 1; i >= 0; i--) {
       const p = pops[i];
       const age = (now - p.born) / 1000;
@@ -713,8 +728,9 @@ export async function mountViewer(root) {
     // HUD at ~4 Hz
     if (now - hudTick > 250) {
       hudTick = now;
-      const wm = wallMs();
-      $("clock").textContent = `${dayFmt.format(wm)} ${clockFmt.format(wm)}`;
+      const wm = lightingMs(wallMs());
+      $("day").textContent = dayFmt.format(wm);
+      $("clock").textContent = clockFmt.format(wm);
       $("s-veh").textContent = String(list.length);
       $("s-reads").textContent = reads.toLocaleString("en-GB");
       $("s-rev").textContent = money(revenue);
@@ -739,6 +755,9 @@ export async function mountViewer(root) {
     },
     get lastReadAt() {
       return lastReadAt;
+    },
+    get lastReadGantry() {
+      return lastReadGantry ? `${lastReadGantry.id}:${lastReadGantry.dir}` : null;
     },
     feed,
   };

@@ -350,6 +350,46 @@ operator would check ownership against the national vehicle registry before lett
 someone see, dispute or pay that plate's passages. That integration is out of scope
 here.
 
+## 3D live viewer and landing page
+
+`viewer/` is a standalone Vite + three.js site with its own `package.json`. It is
+built for the public path `/projects/toll-sim/`:
+
+```bash
+cd viewer
+npm ci
+npm run build      # output in viewer/dist, served at /projects/toll-sim/
+npm run preview    # http://localhost:4173/projects/toll-sim/
+```
+
+Routes use the hash, so the site works from any static host:
+
+- `#/` is the landing page. It has a corridor map drawn from `road.json`, links to
+  the 3D view and the operations dashboard (`/projects/toll-sim/live/dashboard/`),
+  and "Source on request".
+- `#/live` is the 3D view of the A1. It draws the road from the exported SUMO
+  network, interpolates vehicles between frames, lights the scene for the current
+  time in Botswana (UTC+2, sun position and night lighting included), and flashes
+  the gantry portal on every read. It has an event ticker, a click-to-inspect
+  vehicle card, and overview, follow, gantry and director cameras.
+
+**Data.** The viewer subscribes to the SSE stream at
+`/projects/toll-sim/live/live/stream`. If the stream doesn't answer within a few
+seconds, or the bridge says it isn't live, the viewer plays `viewer/public/replay.json`
+instead, and probes for the live stream about once a minute. The HUD badge shows
+**Live** or **Replay**. The replay is a synthetic five-minute recording, about
+1.1 MB delta-encoded, made by `npm run replay` (`viewer/scripts/make-replay.mjs`).
+Traffic keeps left, as it does in Botswana. `road.json` is copied from `live/road.json`
+at build time.
+
+**URL options** for links and captures:
+`#/live?cam=overview|follow|free|gantry:A1-G01:N&time=auto|day|dusk|night|HH:MM&replay`.
+`replay` skips the live stream.
+
+Screenshots and a short clip are in `docs/portfolio/`: `cover.png` (1600x900),
+`landing.png`, `overview.png`, `follow.png`, `gantry-read.png`, `night.png`,
+`mobile.png`, and `clip.mp4` / `clip.webm`.
+
 ## Layout
 
 ```
@@ -366,6 +406,7 @@ customer/          the customer web app and its manifest
 sim/               SUMO network builder, demand generator, TraCI bridge
 anpr/              synthetic plates, CRNN plate reader, ONNX service
 test/              end-to-end tests over real HTTP, with PGlite or Postgres
+viewer/            public 3D viewer and landing page (Vite, three.js)
 ```
 
 ## Roadmap

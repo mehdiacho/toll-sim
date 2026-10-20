@@ -29,6 +29,24 @@ const SKY = [
   [25, C(0x8fbbe3)],
   [90, C(0x7fb2e5)],
 ];
+const ZENITH = [
+  [-18, C(0x020308)],
+  [-6, C(0x060b18)],
+  [0, C(0x1b2a4d)],
+  [6, C(0x3f6fae)],
+  [25, C(0x2f6db8)],
+  [90, C(0x2a64b0)],
+];
+function ramp(keys, deg, out) {
+  for (let i = 1; i < keys.length; i++) {
+    if (deg <= keys[i][0]) {
+      const [d0, c0] = keys[i - 1];
+      const [d1, c1] = keys[i];
+      return out.copy(c0).lerp(c1, Math.max(0, Math.min(1, (deg - d0) / (d1 - d0))));
+    }
+  }
+  return out.copy(keys[keys.length - 1][1]);
+}
 function skyColor(deg, out) {
   for (let i = 1; i < SKY.length; i++) {
     if (deg <= SKY[i][0]) {
@@ -84,6 +102,26 @@ export class Sky {
     );
     this.stars.renderOrder = -1;
     scene.add(this.stars);
+
+    // gradient dome: horizon colour (matches the fog) up to a zenith colour
+    this.dome = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 32, 16),
+      new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        depthWrite: false,
+        fog: false,
+        uniforms: { top: { value: new THREE.Color() }, horizon: { value: new THREE.Color() }, sun: { value: new THREE.Vector3(0, 1, 0) }, glow: { value: new THREE.Color() } },
+        vertexShader: `varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+        fragmentShader: `uniform vec3 top; uniform vec3 horizon; uniform vec3 sun; uniform vec3 glow; varying vec3 vDir;
+          void main(){ float h = clamp(vDir.y, 0.0, 1.0); vec3 c = mix(horizon, top, pow(h, 0.55));
+            float s = max(dot(normalize(vDir), normalize(sun)), 0.0); c += glow * (pow(s, 6.0) * 0.35 + pow(s, 600.0) * 1.5);
+            gl_FragColor = vec4(c, 1.0); }`,
+      }),
+    );
+    this.dome.renderOrder = -2;
+    this.dome.frustumCulled = false;
+    scene.add(this.dome);
+    this.tmp2 = new THREE.Color();
     this.night = 0;
     this.tmp = new THREE.Color();
     this.elevationDeg = 40;
@@ -103,6 +141,13 @@ export class Sky {
     skyColor(deg, this.tmp);
     this.scene.background.copy(this.tmp);
     this.scene.fog.color.copy(this.tmp);
+    const u = this.dome.material.uniforms;
+    u.horizon.value.copy(this.tmp);
+    ramp(ZENITH, deg, u.top.value);
+    u.sun.value.copy(dir);
+    u.glow.value.setRGB(1, 0.8, 0.55).multiplyScalar(THREE.MathUtils.smoothstep(deg, -6, 2));
+    this.dome.position.copy(camera.position);
+    this.dome.scale.setScalar(camera.far * 0.85);
 
     const warm = 1 - THREE.MathUtils.smoothstep(deg, 2, 22);
     this.sun.color.setRGB(1, 0.95 - warm * 0.3, 0.86 - warm * 0.45);
@@ -112,17 +157,17 @@ export class Sky {
     this.sun.target.position.copy(focus);
     this.sun.castShadow = day > 0.2;
 
-    this.moon.intensity = 0.35 * night;
+    this.moon.intensity = 0.9 * night;
     this.moon.position.copy(focus).add(new THREE.Vector3(-300, 900, 400));
     this.moon.target.position.copy(focus);
 
-    this.hemi.intensity = 0.12 + 0.95 * day;
+    this.hemi.intensity = 0.32 + 0.8 * day;
     this.hemi.color.setRGB(0.55 + 0.26 * day, 0.62 + 0.27 * day, 0.85 + 0.15 * day);
     this.hemi.groundColor.setRGB(0.12 + 0.42 * day, 0.11 + 0.34 * day, 0.12 + 0.2 * day);
     this.renderer.toneMappingExposure = 0.9 + 0.25 * day;
 
     this.stars.material.opacity = night * 0.9;
     this.stars.position.copy(camera.position);
-    this.stars.scale.setScalar(camera.far * 0.9);
+    this.stars.scale.setScalar(camera.far * 0.8);
   }
 }

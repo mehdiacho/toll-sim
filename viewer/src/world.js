@@ -143,11 +143,25 @@ export function buildWorld(road, scene) {
 
   // ---------------------------------------------------------------- ground
   const tex = groundTexture();
-  tex.repeat.set(1500, 1500);
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(320000, 320000),
-    new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex, roughness: 1, metalness: 0 }),
-  );
+  tex.repeat.set(5600, 5600);
+  // large-scale tone variation (vertex colours) under the fine texture
+  const gg = new THREE.PlaneGeometry(1200000, 1200000, 240, 240);
+  const gp = gg.attributes.position;
+  const gcol = new Float32Array(gp.count * 3);
+  const c0 = new THREE.Color(0xd8c9a0);
+  const c1 = new THREE.Color(0xa7a46c);
+  const c2 = new THREE.Color(0xe6d7ae);
+  const tc = new THREE.Color();
+  for (let i = 0; i < gp.count; i++) {
+    const x = gp.getX(i) / 26000;
+    const y = gp.getY(i) / 26000;
+    const n = Math.sin(x * 1.3 + Math.sin(y * 0.7) * 2) * 0.5 + Math.sin(y * 1.9 + x * 0.4) * 0.3 + Math.sin((x - y) * 3.1) * 0.2;
+    const m = Math.sin(x * 4.7 + y * 3.3) * Math.sin(y * 5.1 - x * 1.7);
+    tc.copy(c0).lerp(c1, Math.max(0, n) * 0.6).lerp(c2, Math.max(0, m) * 0.35);
+    gcol.set([tc.r, tc.g, tc.b], i * 3);
+  }
+  gg.setAttribute("color", new THREE.BufferAttribute(gcol, 3));
+  const ground = new THREE.Mesh(gg, new THREE.MeshStandardMaterial({ color: 0xffffff, map: tex, vertexColors: true, roughness: 1, metalness: 0 }));
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   group.add(ground);
@@ -165,19 +179,21 @@ export function buildWorld(road, scene) {
     const h = lane.w / 2;
     ribbon(lane.pts, F, h, -h, 0.05, asphalt);
   }
+  // Botswana drives on the left: SUMO lane 0 is the outer (left) lane and the
+  // opposite carriageway lies to the right of the highest lane index.
   for (const lanes of edges.values()) {
     lanes.sort((a, b) => a.idx - b.idx);
-    const right = lanes[0];
-    const left = lanes[lanes.length - 1];
-    const h = right.w / 2;
-    // gravel shoulder and the solid edge line on the outside
-    ribbon(right.pts, F, -h, -h - 2.2, 0.03, shoulder);
-    ribbon(right.pts, F, -h + 0.35, -h + 0.2, 0.07, white);
-    // centre line on the inside (yellow), dashed white between lanes
-    ribbon(left.pts, F, left.w / 2 - 0.05, left.w / 2 - 0.2, 0.07, yellow);
+    const outer = lanes[0];
+    const inner = lanes[lanes.length - 1];
+    const h = outer.w / 2;
+    // gravel shoulder and the solid edge line on the outside (left)
+    ribbon(outer.pts, F, h + 1.6, h, 0.03, shoulder);
+    ribbon(outer.pts, F, h - 0.2, h - 0.35, 0.07, white);
+    // centre line on the inside (right), dashed white between lanes
+    ribbon(inner.pts, F, -inner.w / 2 + 0.2, -inner.w / 2 + 0.05, 0.07, yellow);
     for (let i = 1; i < lanes.length; i++) {
       const hh = lanes[i].w / 2;
-      for (const d of dashed(lanes[i].pts, 12, 4)) ribbon(d, F, -hh + 0.07, -hh - 0.07, 0.07, white);
+      for (const d of dashed(lanes[i].pts, 12, 4)) ribbon(d, F, hh + 0.07, hh - 0.07, 0.07, white);
     }
   }
   const roadMat = new THREE.MeshStandardMaterial({ color: 0x3b3d40, roughness: 0.92, polygonOffset: true, polygonOffsetFactor: -2 });
@@ -186,7 +202,7 @@ export function buildWorld(road, scene) {
   group.add(asphaltMesh);
   const shoulderMesh = new THREE.Mesh(
     geometryOf(shoulder),
-    new THREE.MeshStandardMaterial({ color: 0x9c8a66, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1 }),
+    new THREE.MeshStandardMaterial({ color: 0x8a7a5c, roughness: 1, polygonOffset: true, polygonOffsetFactor: -1 }),
   );
   shoulderMesh.receiveShadow = true;
   group.add(shoulderMesh);
@@ -286,6 +302,20 @@ export function buildWorld(road, scene) {
   const steel = new THREE.MeshStandardMaterial({ color: 0xc9ced4, roughness: 0.45, metalness: 0.6 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.6, metalness: 0.3 });
   const gantries = [];
+  // floodlight pools under the portals, faded in at night by the viewer
+  const gc = document.createElement("canvas");
+  gc.width = gc.height = 128;
+  const gx = gc.getContext("2d");
+  const grad = gx.createRadialGradient(64, 64, 2, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,244,214,0.95)");
+  grad.addColorStop(0.45, "rgba(255,236,196,0.4)");
+  grad.addColorStop(1, "rgba(255,236,196,0)");
+  gx.fillStyle = grad;
+  gx.fillRect(0, 0, 128, 128);
+  const glowTex = new THREE.CanvasTexture(gc);
+  glowTex.colorSpace = THREE.SRGBColorSpace;
+  const glowMat = new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+  const glowGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   for (const g of road.gantries) {
     const portal = new THREE.Group();
     const half = g.span / 2 + 1.2;
@@ -331,6 +361,12 @@ export function buildWorld(road, scene) {
     sign.position.set(0.1, H + 1.7, 0);
     portal.add(sign);
 
+    const pool = new THREE.Mesh(glowGeo, glowMat);
+    pool.scale.set(30, 1, g.span + 22);
+    pool.position.y = 0.12;
+    pool.renderOrder = 3;
+    portal.add(pool);
+
     // orient: heading is the travel direction (math convention, SUMO coords);
     // the portal's local x axis points along the road.
     portal.position.set(F.x(g.x), 0, F.z(g.y));
@@ -352,5 +388,5 @@ export function buildWorld(road, scene) {
     return { ...p, label: l, pos: l.position.clone() };
   });
 
-  return { F, group, gantries, places, overviewLines, ground };
+  return { F, group, gantries, places, overviewLines, ground, glowMat };
 }

@@ -237,7 +237,10 @@ for (const r of routes) {
   for (let s = 50; s < r.len - 50; ) {
     const p = at(r, s);
     const km = Math.hypot(p.x - gab.x, p.y - gab.y) / 1000;
-    const perKm = 1.1 + 6 * Math.exp(-km / 22);
+    // Busier just upstream of each gantry so that a few minutes of recording
+    // carries a steady stream of reads.
+    const upstream = gates.some((g) => g.route === r && g.s - s > 300 && g.s - s < 9000);
+    const perKm = 0.7 + 6 * Math.exp(-km / 22) + (upstream ? 2.6 : 0);
     s += expo(perKm / 1000) + 25;
     if (s < r.len - 50) makeVehicle(r, s, false);
   }
@@ -352,7 +355,7 @@ function step(t, recording) {
       const s0 = v.s;
       v.s += v.v * DT;
       // ease the lateral offset toward the chosen lane
-      const latTarget = v.lane * 3.2;
+      const latTarget = -v.lane * 3.2; // overtaking lane is on the right (left-hand traffic)
       v.lat += Math.sign(latTarget - v.lat) * Math.min(Math.abs(latTarget - v.lat), 1.2 * DT);
       if (recording) for (const g of gates) if (g.route === r && s0 < g.s && v.s >= g.s) read(v, g);
     }

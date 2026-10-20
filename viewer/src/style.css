@@ -813,6 +813,9 @@ body[data-page="live"] {
   .hud-top .brand {
     font-size: 13.5px;
   }
+  #day {
+    display: none;
+  }
   .stats {
     gap: 12px;
     width: 100%;
@@ -849,7 +852,7 @@ body[data-page="live"] {
     padding: 8px 10px 4px;
   }
   .ticker ol {
-    max-height: 120px;
+    max-height: 100px;
     overflow: hidden;
   }
   .ev {
@@ -860,13 +863,18 @@ body[data-page="live"] {
     left: 8px;
     right: 8px;
     width: auto;
-    bottom: auto;
-    top: 96px;
-    padding: 10px 12px;
+    bottom: 254px;
+    padding: 8px 12px;
+  }
+  .card-h {
+    margin-bottom: 4px;
+  }
+  .card-b div {
+    padding: 1px 0;
+    font-size: 12px;
   }
   .shot {
-    top: auto;
-    bottom: 256px;
+    top: 112px;
   }
   .vfoot {
     font-size: 10px;
