@@ -550,9 +550,11 @@ def main() -> None:
             stats.add("error", len(batch))
             print(f"batch failed: {e}", file=sys.stderr)
 
-    # The public demo wipes its database every night. The back office then reports a
-    # new epoch on /health; the fleet this run created is gone, so stop and let the
-    # container restart with a fresh one.
+    # The back office reports a new epoch on /health when it restarts (its live
+    # feed has forgotten the vehicles on the road) or when the public demo wipes
+    # its database at night (the fleet is gone). Either way, stop and let the
+    # container restart: the fleet is reused or recreated, and every vehicle is
+    # announced to the feed again.
     reset_seen = threading.Event()
 
     def watch_epoch():
@@ -562,7 +564,7 @@ def main() -> None:
             except OSError:
                 continue
             if status == 200 and epoch and (health or {}).get("epoch") not in (None, epoch):
-                print("back office data was reset; restarting with a new fleet", flush=True)
+                print("back office restarted or its data was reset; restarting so the fleet and the 3D feed start clean", flush=True)
                 reset_seen.set()
 
     if args.live and epoch:
