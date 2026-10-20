@@ -56,6 +56,14 @@ import { listOutbox, outboxQuery } from "./services/outbox.js";
 import { dashboardSnapshot } from "./services/dashboard.js";
 import { getReview, getReviewImage, listReviews, resolveInput, resolveReview, reviewQuery } from "./services/reviews.js";
 import { ingestPassage, listPassages, passageBatchInput, passageInput, passageQuery } from "./services/passages.js";
+import {
+  listPlazaTransactions,
+  plazaSummary,
+  plazaTransactionBatch,
+  plazaTransactionInput,
+  plazaTransactionQuery,
+  recordPlazaTransaction,
+} from "./services/plazas.js";
 import { buildStatement, statementQuery } from "./services/statements.js";
 import { newTariffInput, scheduleTariff } from "./services/tariffs.js";
 import {
@@ -286,6 +294,37 @@ export function buildApp({ db, gateway, config, logger = false, live = new LiveH
   });
   app.get("/passages", admin, async (req) => listPassages(db, passageQuery.parse(req.query)));
 
+  // --- toll plazas ----------------------------------------------------------
+  // Cash and card taken at a booth. Same batch shape as /passages.
+  app.post("/plaza/transactions", { ...bigBody, preHandler: requireRole("ingest", "admin") }, async (req, reply) => {
+    const body = req.body as any;
+    if (body && Array.isArray(body.transactions)) {
+      const { transactions } = plazaTransactionBatch.parse(body);
+      const results = [];
+      for (const raw of transactions) {
+        const parsed = plazaTransactionInput.safeParse(raw);
+        const id = (raw as any)?.source_event_id ?? null;
+        if (!parsed.success) {
+          results.push({ source_event_id: id, ok: false, error: "validation_failed", issues: parsed.error.issues });
+          continue;
+        }
+        try {
+          const r = await recordPlazaTransaction(db, parsed.data, req.actor);
+          results.push({ source_event_id: id, ok: true, duplicate: r.duplicate, transaction_id: r.transaction.id, amount_thebe: r.transaction.amount_thebe });
+        } catch (err: any) {
+          if (!(err instanceof AppError)) throw err;
+          results.push({ source_event_id: id, ok: false, error: err.code, message: err.message });
+        }
+      }
+      return reply.code(200).send({ results });
+    }
+    const r = await recordPlazaTransaction(db, plazaTransactionInput.parse(body), req.actor);
+    return reply.code(r.duplicate ? 200 : 201).send({ duplicate: r.duplicate, ...r.transaction });
+  });
+  app.get("/plaza/transactions", admin, async (req) => listPlazaTransactions(db, plazaTransactionQuery.parse(req.query)));
+  // Today's takings per plaza; the bridge reads it at start-up to seed its counters.
+  app.get("/plazas", { preHandler: requireRole("ingest", "admin") }, async () => plazaSummary(db, startOfBotswanaDay()));
+
   // --- top-ups and provider callbacks ---------------------------------------
   app.post("/accounts/:id/topups", admin, async (req, reply) => {
     const key = req.headers["idempotency-key"];
@@ -495,7 +534,7 @@ export function buildApp({ db, gateway, config, logger = false, live = new LiveH
     const { window_minutes } = z
       .object({ window_minutes: z.coerce.number().int().min(5).max(24 * 60).default(60) })
       .parse(req.query);
-    return dashboardSnapshot(db, window_minutes);
+    return dashboardSnapshot(db, window_minutes, { since: startOfBotswanaDay(), live: live.plazaState() });
   });
 
   // --- live 3D view ------------------------------------------------------------
@@ -636,6 +675,8 @@ function summarize(r: Awaited<ReturnType<typeof ingestPassage>>) {
     charged_class: r.passage.charged_class,
     match_method: r.passage.match_method,
     class_mismatch: r.passage.class_mismatch,
+    decline_reason: r.passage.decline_reason ?? null,
+    tag_plate_mismatch: r.passage.tag_plate_mismatch ?? false,
     violation_id: r.violation?.id ?? null,
     violation_reason: r.violation?.reason ?? null,
     review_id: r.review_id ?? null,

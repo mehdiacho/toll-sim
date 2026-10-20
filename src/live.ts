@@ -16,6 +16,19 @@ const vehicleTuple = z.tuple([z.number().int(), z.number().int(), z.number().int
 /** [id, plate, class, flags]; flags bit 0 = registered, bit 1 = has a tag. */
 const spawnTuple = z.tuple([z.number().int(), z.string().max(16), z.string().max(2), z.number().int()]);
 
+const perDir = z.object({ N: z.number().int().min(0), S: z.number().int().min(0) });
+const plazaStats = z.object({
+  open: perDir,
+  queue: perDir,
+  wait_s: z.number().min(0),
+  /** Vehicles through today, by how they paid. */
+  by_method: z.object({ tag: z.number().int().min(0), cash: z.number().int().min(0), card: z.number().int().min(0) }),
+});
+const boomTuple = z.tuple([z.string().max(20), z.enum(["N", "S"]), z.number().int().min(0).max(15), z.union([z.literal(0), z.literal(1)])]);
+const laneList = z.array(z.number().int().min(0).max(15)).max(16);
+const lanesOpen = z.object({ N: laneList, S: laneList });
+export type PlazaStats = z.infer<typeof plazaStats>;
+
 export const liveFrameInput = z.object({
   /** Simulation time in seconds: the viewer interpolates on it. */
   t: z.number(),
@@ -35,11 +48,20 @@ export const liveFrameInput = z.object({
         amount_thebe: z.number().int().nullable(),
         reason: z.string().max(40).nullable(),
         match: z.string().max(20).nullable(),
+        /** At a toll plaza: which plaza, which lane, and how the vehicle paid. */
+        plaza: z.string().max(20).optional(),
+        lane: z.number().int().min(0).max(15).optional(),
+        method: z.enum(["tag", "cash", "card", "plate", "runner"]).optional(),
       }),
     )
     .max(2000)
     .default([]),
-  stats: z.record(z.string(), z.number()).default({}),
+  /** Counters, plus per-plaza state under `plazas`. */
+  stats: z.object({ plazas: z.record(z.string(), plazaStats).optional() }).catchall(z.number()).default({}),
+  /** Booms that moved since the last frame: [plazaId, dir, laneIdx, 1 = up / 0 = down]. */
+  booms: z.array(boomTuple).max(2000).optional(),
+  /** Which lanes are open at each plaza, sent when it changes. */
+  lanes_open: z.record(z.string(), lanesOpen).optional(),
 });
 export type LiveFrame = z.infer<typeof liveFrameInput>;
 
@@ -54,6 +76,10 @@ export class LiveHub {
   private lastAt = 0;
   private recent: (LiveFrame["events"][number] & { clock: string })[] = [];
   private clients = new Set<Client>();
+  /** Every boom's position and the open lanes, accumulated from frames, for late joiners. */
+  private booms = new Map<string, [string, "N" | "S", number, 0 | 1]>();
+  private lanesOpen: Record<string, { N: number[]; S: number[] }> = {};
+  private plazaStats: Record<string, PlazaStats> = {};
 
   constructor(private maxClients = 300) {}
 
@@ -64,6 +90,9 @@ export class LiveHub {
   publish(frame: LiveFrame) {
     for (const [id, plate, cls, flags] of frame.spawn) this.registry.set(id, [plate, cls, flags]);
     for (const id of frame.gone) this.registry.delete(id);
+    for (const b of frame.booms ?? []) this.booms.set(`${b[0]}|${b[1]}|${b[2]}`, b);
+    if (frame.lanes_open) this.lanesOpen = { ...this.lanesOpen, ...frame.lanes_open };
+    if (frame.stats.plazas) this.plazaStats = frame.stats.plazas;
     this.last = frame;
     this.lastAt = Date.now();
     for (const e of frame.events) this.recent.push({ ...e, clock: frame.clock });
@@ -81,7 +110,14 @@ export class LiveHub {
       registry: [...this.registry].map(([id, [plate, cls, flags]]) => [id, plate, cls, flags]),
       recent: this.recent,
       watchers: this.clients.size,
+      lanes_open: this.lanesOpen,
+      booms: [...this.booms.values()],
     };
+  }
+
+  /** The latest per-plaza picture from the simulation (open lanes, queues, waits). */
+  plazaState(): { stats: Record<string, PlazaStats>; lanes_open: Record<string, { N: number[]; S: number[] }>; live: boolean } {
+    return { stats: this.plazaStats, lanes_open: this.lanesOpen, live: !!this.last && Date.now() - this.lastAt < 30_000 };
   }
 
   /**

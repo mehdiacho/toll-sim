@@ -314,6 +314,7 @@ function tripBadge(p) {
   if (p.status === "refunded") return `<span class="badge b-mute">Refunded</span>`;
   if (p.status === "waived") return `<span class="badge b-mute">Cancelled</span>`;
   if (p.status === "review") return `<span class="badge b-mute">Being checked</span>`;
+  if (p.status === "declined") return `<span class="badge b-warn">Tag declined, paid at booth</span>`;
   if (p.violation_status === "settled") return `<span class="badge b-good">Paid</span>`;
   return `<span class="badge b-bad">Unpaid</span>`;
 }

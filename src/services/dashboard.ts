@@ -1,4 +1,13 @@
 import type { Queryable } from "../db/index.js";
+import type { PlazaStats } from "../live.js";
+import { plazaSummary } from "./plazas.js";
+
+export interface DashboardOptions {
+  /** Start of "today" for the plaza takings. */
+  since?: Date;
+  /** What the simulation reports right now: lanes open, queues, waits. */
+  live?: { stats: Record<string, PlazaStats>; lanes_open: Record<string, { N: number[]; S: number[] }>; live: boolean };
+}
 
 /**
  * One snapshot for the operations dashboard. The time series is keyed on
@@ -6,13 +15,14 @@ import type { Queryable } from "../db/index.js";
  * its own clock still draws a sensible chart; the window ends at the newest
  * passage rather than at now().
  */
-export async function dashboardSnapshot(q: Queryable, windowMinutes = 60) {
+export async function dashboardSnapshot(q: Queryable, windowMinutes = 60, opts: DashboardOptions = {}) {
   const [totals, gantries, classes, series, recent, topups, violations, audit, reviews, disputes, enforcement] = await Promise.all([
     q.query(`
       SELECT count(*)::int                                                    AS passages,
              count(*) FILTER (WHERE status = 'charged')::int                  AS charged,
              count(*) FILTER (WHERE status = 'unpaid')::int                   AS unpaid,
              count(*) FILTER (WHERE status = 'review')::int                   AS in_review,
+             count(*) FILTER (WHERE status = 'declined')::int                 AS declined,
              count(*) FILTER (WHERE match_method = 'manual')::int             AS by_review,
              count(*) FILTER (WHERE match_method = 'tag')::int                AS by_tag,
              count(*) FILTER (WHERE match_method = 'plate')::int              AS by_plate,
@@ -84,6 +94,19 @@ export async function dashboardSnapshot(q: Queryable, windowMinutes = 60) {
       FROM violations WHERE status = 'open'`),
   ]);
 
+  // Plazas: today's takings from the database, the live picture from the simulation.
+  const plazas = (await plazaSummary(q, opts.since ?? new Date(Date.now() - 24 * 3600_000))).map((p) => {
+    const st = opts.live?.live ? opts.live.stats[p.id] : undefined;
+    const open = opts.live?.live ? opts.live.lanes_open[p.id] : undefined;
+    return {
+      ...p,
+      lanes_open: open ?? null,
+      open: st?.open ?? (open ? { N: open.N.length, S: open.S.length } : null),
+      queue: st?.queue ?? null,
+      wait_s: st?.wait_s ?? null,
+    };
+  });
+
   // pg returns bigint as string; the dashboard wants numbers (all well inside 2^53).
   const num = (rows: Record<string, any>[]) =>
     rows.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, k.endsWith("_thebe") ? Number(v) : v])));
@@ -101,5 +124,6 @@ export async function dashboardSnapshot(q: Queryable, windowMinutes = 60) {
     reviews: reviews.rows[0],
     disputes: num(disputes.rows)[0],
     enforcement: num(enforcement.rows)[0],
+    plazas,
   };
 }

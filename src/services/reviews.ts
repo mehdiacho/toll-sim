@@ -98,6 +98,7 @@ export async function resolveReview(
         detectedClass: passage.detected_class,
         vehicle: await findVehicle(q, "plate", plate),
         matchMethod: "manual",
+        runner: passage.payment_method === "runner",
       });
       updated = (
         await q.query(

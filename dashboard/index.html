@@ -29,7 +29,8 @@
   .map { grid-column: span 7; }
   .chart { grid-column: span 5; }
   .classes, .topups, .violations { grid-column: span 4; }
-  .feed { grid-column: 1 / -1; }
+  .feed, .plazas { grid-column: 1 / -1; }
+  .declined { color: var(--warn); }
   @media (max-width: 1100px) { .map, .chart, .classes, .topups, .violations { grid-column: 1 / -1; } }
   svg { display: block; width: 100%; height: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -72,6 +73,8 @@
   <section class="panel map"><h2>Corridor</h2><svg id="map" viewBox="0 0 700 420"></svg></section>
   <section class="panel chart"><h2>Passages per minute (sim clock)</h2><svg id="chart" viewBox="0 0 520 260"></svg>
     <div class="legend"><span><i style="background:var(--accent)"></i>charged</span><span><i style="background:var(--bad)"></i>unpaid</span><span><i style="background:var(--warn);height:2px"></i>revenue / min</span></div></section>
+
+  <section class="panel plazas"><h2>Toll plazas · today</h2><div class="feed-wrap" id="plazas"></div></section>
 
   <section class="panel classes"><h2>Class mix</h2><div id="classes"></div></section>
   <section class="panel topups"><h2>Top-ups by provider</h2><div id="topups"></div></section>
@@ -180,6 +183,16 @@ function render(d) {
   updateMap(d.gantries);
   drawChart(d.series);
 
+  const dirs = (o) => (o ? `${o.N} / ${o.S}` : "–");
+  $("plazas").innerHTML = d.plazas && d.plazas.length ? `<table><tr><th>Plaza</th><th class="n">km</th><th class="n">lanes open N / S</th><th class="n">queue N / S</th><th class="n">avg wait</th>
+      <th class="n">tag</th><th class="n">cash</th><th class="n">card</th><th class="n">taken</th><th class="n">declined tags</th><th class="n">runners</th><th class="n">tag ≠ plate</th></tr>
+    ${d.plazas.map((p) => `<tr><td>${esc(p.id)} · ${esc(p.name)}</td><td class="n">${p.km.toFixed(1)}</td><td class="n">${dirs(p.open)}</td><td class="n">${dirs(p.queue)}</td>
+      <td class="n">${p.wait_s == null ? "–" : Math.round(p.wait_s) + " s"}</td>
+      <td class="n">${int(p.by_method.tag)}</td><td class="n">${int(p.by_method.cash)}</td><td class="n">${int(p.by_method.card)}</td>
+      <td class="n">${pulaShort(p.revenue_thebe.tag + p.revenue_thebe.cash + p.revenue_thebe.card)}</td>
+      <td class="n">${int(p.declined)}</td><td class="n ${p.runners ? "unpaid" : ""}">${int(p.runners)}</td><td class="n">${int(p.tag_plate_mismatch)}</td></tr>`).join("")}</table>`
+    : `<div class="empty">no plazas</div>`;
+
   const maxC = Math.max(...d.classes.map((c) => c.passages), 1);
   $("classes").innerHTML = `<table>${d.classes.map((c) => `<tr><td style="width:110px">${esc(c.code)} · ${esc(c.name)}</td>
     <td><div class="bar" style="width:${(100 * c.passages / maxC).toFixed(1)}%"></div></td><td class="n">${int(c.passages)}</td></tr>`).join("")}</table>`;
@@ -189,7 +202,7 @@ function render(d) {
     ${d.topups.map((t) => `<tr><td>${names[t.provider] ?? esc(t.provider)}</td><td class="n">${t.succeeded}</td><td class="n">${t.failed}</td><td class="n">${t.pending}</td><td class="n">${pulaShort(t.amount_thebe)}</td></tr>`).join("")}</table>`
     : `<div class="empty">no top-ups yet</div>`;
 
-  const reason = { insufficient_funds: "insufficient funds", unregistered_vehicle: "unregistered", account_inactive: "account inactive" };
+  const reason = { insufficient_funds: "insufficient funds", unregistered_vehicle: "unregistered", account_inactive: "account inactive", boom_runner: "boom runner" };
   $("violations").innerHTML = d.violations.length ? `<table><tr><th>Status</th><th>Reason</th><th class="n">count</th><th class="n">amount</th></tr>
     ${d.violations.map((v) => `<tr><td>${esc(v.status)}</td><td>${reason[v.reason] ?? esc(v.reason)}</td><td class="n">${int(v.count)}</td><td class="n">${pulaShort(v.amount_thebe)}</td></tr>`).join("")}</table>`
     : `<div class="empty">no violations</div>`;

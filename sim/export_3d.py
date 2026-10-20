@@ -3,7 +3,10 @@
 Everything is in SUMO network metres (the same x, y the bridge streams vehicle
 positions in), so the viewer needs no projection:
   lanes     every lane of both through-routes, simplified to ~1 m, with its width
-  gantries  one portal per gantry and direction, spanning that carriageway
+  gantries  one portal per plaza and direction just past the booms, spanning
+            that carriageway (kept for older viewers)
+  plazas    each toll plaza: its booth line, the heading of northbound travel
+            and every lane's centre, width and type (heavy, mixed, etag)
   places    labels for the towns along the way
   bounds    the extent of the network
 
@@ -143,6 +146,33 @@ def main() -> None:
                     span=round(twin["span"] + g["span"] - 3.0, 1), lanes=twin["lanes"] + g["lanes"], dir="NS")
     gantries = merged
 
+    # Toll plazas: the booth line of each lane, both directions. heading is the
+    # direction of northbound travel there (radians, math convention).
+    plazas = []
+    for g in corridor["gantries"]:
+        p = g.get("plaza")
+        if not p:
+            continue
+        lanes_out = []
+        heading = 0.0
+        for direction in ("N", "S"):
+            d = p["dirs"][direction]
+            for idx, lane_id in enumerate(d["lanes"]):
+                lane = net.getLane(lane_id)
+                shape = lane.getShape()
+                x, y = shape[-1]
+                lanes_out.append({"dir": direction, "idx": idx, "type": p["lane_types"][idx],
+                                  "x": round(x, 2), "y": round(y, 2), "w": round(lane.getWidth(), 2)})
+                if direction == "N" and idx == 0:
+                    heading = sumolib.geomhelper.rotationAtShapeOffset(shape, lane.getLength() - 0.1)
+        plazas.append({
+            "id": g["id"], "name": g["name"], "km": g["km"],
+            "x": round(sum(l["x"] for l in lanes_out) / len(lanes_out), 2),
+            "y": round(sum(l["y"] for l in lanes_out) / len(lanes_out), 2),
+            "heading": round(heading, 4),
+            "lanes": lanes_out,
+        })
+
     places = []
     for name, lat, lon in PLACES:
         x, y = net.convertLonLat2XY(lon, lat)
@@ -155,13 +185,14 @@ def main() -> None:
         "lanes": lanes,
         "junctions": junctions,
         "gantries": gantries,
+        "plazas": plazas,
         "places": places,
     }
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     npts = sum(len(l["pts"]) for l in lanes)
     print(f"wrote {OUT} ({OUT.stat().st_size // 1024} KB): {len(lanes)} lanes, {npts} points, "
-          f"{len(junctions)} junctions, {len(gantries)} portals")
+          f"{len(junctions)} junctions, {len(gantries)} portals, {len(plazas)} plazas")
 
 
 if __name__ == "__main__":

@@ -22,8 +22,15 @@ export const passageInput = z
       .max(5)
       .nullish(),
     image_b64: z.string().max(300_000).nullish(),
+    // At a toll plaza: the lane and direction, and how the boom was passed. A
+    // 'tag' read pays from the account or is declined (the driver then pays at
+    // the booth); a 'runner' drove through without paying.
+    lane: z.number().int().min(0).max(15).nullish(),
+    direction: z.enum(["N", "S"]).nullish(),
+    payment: z.enum(["tag", "runner"]).nullish(),
   })
-  .refine((p) => p.plate || p.tag_id, { message: "plate or tag_id is required" });
+  .refine((p) => p.plate || p.tag_id, { message: "plate or tag_id is required" })
+  .refine((p) => p.payment !== "tag" || p.tag_id, { message: "a tag payment needs tag_id", path: ["tag_id"] });
 
 export const passageBatchInput = z.object({ events: z.array(z.unknown()).min(1).max(500) });
 
@@ -98,18 +105,21 @@ async function ingestInTx(q: Queryable, input: PassageInput, opts: IngestOptions
 
   // A tag is a stronger identifier than a camera read, so it wins when present.
   const tagged = tagId ? await findVehicle(q, "tag_id", tagId) : undefined;
+  const plaza = { lane: input.lane ?? null, direction: input.direction ?? null, payment: input.payment ?? null };
+  const tagPayment = input.payment === "tag";
 
   // An unsure camera read with no tag behind it goes to a person, not to the
   // ledger: charging or ticketing the wrong plate is the failure that sinks trust.
+  // (A declined tag at a plaza is never billed by plate: the driver pays at the booth.)
   const needsReview =
-    !tagged && plate !== null && input.read_confidence != null && input.read_confidence < opts.reviewThreshold;
+    !tagged && !tagPayment && plate !== null && input.read_confidence != null && input.read_confidence < opts.reviewThreshold;
   if (needsReview) {
     const chargedClass = input.detected_class ?? DEFAULT_CLASS;
     const tariff = await requireTariff(q, input.gantry_id, chargedClass, input.passed_at);
     const { rows } = await q.query(
       `INSERT INTO passages (gantry_id, source_event_id, passed_at, plate_read, tag_id, read_confidence, detected_class,
-                             charged_class, amount_thebe, status, match_method)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'review', 'none') RETURNING *`,
+                             charged_class, amount_thebe, status, match_method, plaza_lane, direction, payment_method)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'review', 'none', $10, $11, $12) RETURNING *`,
       [
         input.gantry_id,
         input.source_event_id,
@@ -120,6 +130,9 @@ async function ingestInTx(q: Queryable, input: PassageInput, opts: IngestOptions
         input.detected_class ?? null,
         chargedClass,
         tariff.amount_thebe,
+        plaza.lane,
+        plaza.direction,
+        plaza.payment,
       ],
     );
     const passage = rows[0];
@@ -150,14 +163,34 @@ async function ingestInTx(q: Queryable, input: PassageInput, opts: IngestOptions
     gantryId: input.gantry_id,
     passedAt: input.passed_at,
     detectedClass: input.detected_class ?? null,
-    vehicle: tagged ?? (plate ? await findVehicle(q, "plate", plate) : undefined),
+    // A tag payment stands or falls on the tag: no fallback to the plate.
+    vehicle: tagged ?? (plate && !tagPayment ? await findVehicle(q, "plate", plate) : undefined),
     matchMethod: tagged ? "tag" : "plate",
+    runner: input.payment === "runner",
   });
+
+  // At a plaza a tag the account can't pay for keeps the boom down. Nothing is
+  // owed: the driver pays cash or card at the booth (a plaza transaction).
+  let status: string = d.status;
+  let declineReason: string | null = null;
+  if (tagPayment && d.status !== "charged") {
+    status = "declined";
+    declineReason = tagged ? (d.violationReason ?? "insufficient_funds") : "tag_not_found";
+  }
+  // The plate camera audits the tag: a confident read of a different plate is flagged.
+  const tagPlateMismatch = Boolean(
+    tagged?.plate &&
+      plate &&
+      input.read_confidence != null &&
+      input.read_confidence >= opts.reviewThreshold &&
+      plate !== tagged.plate,
+  );
 
   const { rows } = await q.query(
     `INSERT INTO passages (gantry_id, source_event_id, passed_at, plate_read, tag_id, read_confidence, detected_class,
-                           vehicle_id, account_id, charged_class, amount_thebe, status, match_method, class_mismatch)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+                           vehicle_id, account_id, charged_class, amount_thebe, status, match_method, class_mismatch,
+                           plaza_lane, direction, payment_method, decline_reason, tag_plate_mismatch)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *`,
     [
       input.gantry_id,
       input.source_event_id,
@@ -170,13 +203,18 @@ async function ingestInTx(q: Queryable, input: PassageInput, opts: IngestOptions
       d.vehicle?.account_id ?? null,
       d.chargedClass,
       d.amount,
-      d.status,
+      status,
       d.matchMethod,
       d.classMismatch,
+      plaza.lane,
+      plaza.direction,
+      plaza.payment,
+      declineReason,
+      tagPlateMismatch,
     ],
   );
   const passage = rows[0];
-  const violation = await settle(q, passage, d, plate, input.passed_at, opts.graceDays);
+  const violation = declineReason ? undefined : await settle(q, passage, d, plate, input.passed_at, opts.graceDays);
   const wanted = plate ? await hotlistHit(q, plate) : null;
   if (wanted) {
     await audit(q, opts.actor, "enforcement.hotlist_hit", "passage", passage.id, { plate, gantry_id: input.gantry_id, ...wanted });
@@ -189,19 +227,28 @@ async function ingestInTx(q: Queryable, input: PassageInput, opts: IngestOptions
     charged_class: d.chargedClass,
     amount_thebe: d.amount,
     tariff_id: d.tariffId,
-    status: d.status,
+    status,
     violation_id: violation?.id ?? null,
-    violation_reason: d.violationReason,
+    violation_reason: violation ? d.violationReason : null,
+    ...(plaza.payment
+      ? {
+          lane: plaza.lane,
+          direction: plaza.direction,
+          payment: plaza.payment,
+          decline_reason: declineReason,
+          tag_plate_mismatch: tagPlateMismatch,
+        }
+      : {}),
   });
 
   return { duplicate: false, passage, violation, hotlist: wanted };
 }
 
-export type VehicleMatch = { id: string; account_id: string; vehicle_class: string };
+export type VehicleMatch = { id: string; account_id: string; vehicle_class: string; plate?: string };
 
 export async function findVehicle(q: Queryable, by: "tag_id" | "plate", value: string): Promise<VehicleMatch | undefined> {
   const { rows } = await q.query<VehicleMatch>(
-    `SELECT id, account_id, vehicle_class FROM vehicles WHERE active AND ${by} = $1`,
+    `SELECT id, account_id, vehicle_class, plate FROM vehicles WHERE active AND ${by} = $1`,
     [value],
   );
   return rows[0];
@@ -221,7 +268,7 @@ export interface Decision {
   amount: number;
   tariffId: unknown;
   status: "charged" | "unpaid";
-  violationReason: "insufficient_funds" | "unregistered_vehicle" | "account_inactive" | null;
+  violationReason: "insufficient_funds" | "unregistered_vehicle" | "account_inactive" | "boom_runner" | null;
 }
 
 /**
@@ -236,6 +283,8 @@ export async function decide(
     detectedClass: string | null;
     vehicle?: VehicleMatch;
     matchMethod: Decision["matchMethod"];
+    /** Drove through a plaza boom without paying: never charged, always a violation. */
+    runner?: boolean;
   },
 ): Promise<Decision> {
   const vehicle = p.vehicle;
@@ -248,7 +297,10 @@ export async function decide(
 
   let status: Decision["status"] = "unpaid";
   let violationReason: Decision["violationReason"] = null;
-  if (!vehicle) {
+  if (p.runner) {
+    // Not taken from the balance: running a boom is enforced, not quietly billed.
+    violationReason = "boom_runner";
+  } else if (!vehicle) {
     violationReason = "unregistered_vehicle";
   } else {
     const account = await lockedBalance(q, vehicle.account_id);
@@ -312,7 +364,7 @@ export const passageQuery = z.object({
   plate: z.string().optional(),
   gantry_id: z.string().optional(),
   account_id: z.uuid().optional(),
-  status: z.enum(["charged", "unpaid", "waived", "review", "refunded"]).optional(),
+  status: z.enum(["charged", "unpaid", "waived", "review", "refunded", "declined"]).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
 });
 

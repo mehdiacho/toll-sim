@@ -141,7 +141,7 @@ describe("tariff versioning", () => {
     expect(t.status).toBe(201);
     const before = await passage({ plate: p, gantry_id: "A1-G02", passed_at: new Date(change.getTime() - 1000).toISOString() });
     const after = await passage({ plate: p, gantry_id: "A1-G02", passed_at: new Date(change.getTime() + 1000).toISOString() });
-    expect(before.body.amount_thebe).toBe(800);
+    expect(before.body.amount_thebe).toBe(1500); // motorcycles pay the Class 1 toll
     expect(after.body.amount_thebe).toBe(1000);
   });
 
