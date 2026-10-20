@@ -1,0 +1,19 @@
+{
+  "name": "toll-sim-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public 3D live viewer and landing page for the A1 toll simulator",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "replay": "node scripts/make-replay.mjs"
+  },
+  "dependencies": {
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "vite": "6.4.3"
+  }
+}
