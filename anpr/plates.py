@@ -27,11 +27,11 @@ FONT_DIR = Path(os.environ.get("FONT_DIR", "C:/Windows/Fonts"))
 # On Linux (the Docker image) the Windows fonts aren't there: use the closest free
 # ones. Liberation Sans is metric-compatible with Arial; DejaVu covers the rest.
 FALLBACK_FONTS = {
-    "bahnschrift.ttf": "LiberationSansNarrow-Bold.ttf",
-    "ARIALNB.TTF": "LiberationSansNarrow-Bold.ttf",
-    "arialbd.ttf": "LiberationSans-Bold.ttf",
-    "tahomabd.ttf": "DejaVuSans-Bold.ttf",
-    "verdanab.ttf": "DejaVuSans-Bold.ttf",
+    "bahnschrift.ttf": ["LiberationSansNarrow-Bold.ttf", "DejaVuSansCondensed-Bold.ttf", "LiberationSans-Bold.ttf"],
+    "ARIALNB.TTF": ["LiberationSansNarrow-Bold.ttf", "DejaVuSansCondensed-Bold.ttf", "LiberationSans-Bold.ttf"],
+    "arialbd.ttf": ["LiberationSans-Bold.ttf", "DejaVuSans-Bold.ttf"],
+    "tahomabd.ttf": ["DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf"],
+    "verdanab.ttf": ["DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf"],
 }
 FALLBACK_DIRS = [Path("/usr/share/fonts/truetype/liberation"), Path("/usr/share/fonts/truetype/dejavu")]
 
@@ -40,6 +40,11 @@ def font_path(name: str) -> Path:
     path = FONT_DIR / name
     if path.exists():
         return path
+    for alt in FALLBACK_FONTS.get(name, []):
+        for d in FALLBACK_DIRS:
+            if (d / alt).exists():
+                return d / alt
+    return path
     alt = FALLBACK_FONTS.get(name)
     for d in FALLBACK_DIRS:
         if alt and (d / alt).exists():
