@@ -365,7 +365,7 @@ npm run preview    # http://localhost:4173/projects/toll-sim/
 Routes use the hash, so the site works from any static host:
 
 - `#/` is the landing page. It has a corridor map drawn from `road.json`, links to
-  the 3D view and the operations dashboard (`/projects/toll-sim/live/dashboard/`),
+  the 3D view and the operations dashboard (`/projects/toll-sim/live/dashboard`),
   and "Source on request".
 - `#/live` is the 3D view of the A1. It draws the road from the exported SUMO
   network, interpolates vehicles between frames, lights the scene for the current

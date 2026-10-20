@@ -1,7 +1,7 @@
 export const DISCLAIMER =
   "Independent demo with synthetic data. Not affiliated with the Government of Botswana, any ministry, toll operator or payment provider.";
 
-export const DASHBOARD_URL = `${import.meta.env.BASE_URL}live/dashboard/`;
+export const DASHBOARD_URL = `${import.meta.env.BASE_URL}live/dashboard`;
 
 export function footerHtml() {
   return `<span class="disclaimer">${DISCLAIMER}</span>`;
