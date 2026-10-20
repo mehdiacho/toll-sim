@@ -89,6 +89,50 @@ function derivedLanes(p) {
   return lanes;
 }
 
+/**
+ * Lanes from an export can be packed edge to edge, with no room for the booth
+ * islands. If so they are drawn re-spaced in the standard layout, and srcV keeps
+ * where the feed puts vehicles, so mapV() can move them onto the drawn lanes.
+ */
+function respace(p) {
+  const sorted = [...p.lanes].sort((a, b) => a.v - b.v);
+  let packed = false;
+  for (let i = 1; i < sorted.length; i++) {
+    const a = sorted[i - 1];
+    const b = sorted[i];
+    if (b.v - a.v < (a.w + b.w) / 2 + ISLAND_W * 0.8) packed = true;
+  }
+  for (const l of p.lanes) l.srcV = l.v;
+  if (!packed) return;
+  p.remap = true;
+  for (const dir of ["N", "S"]) {
+    const s = dir === "N" ? 1 : -1;
+    const mine = p.lanes.filter((l) => l.dir === dir).sort((a, b) => s * a.v - s * b.v);
+    mine.forEach((l, j) => {
+      l.w = LANE_W;
+      l.v = s * ((j + 1) * ISLAND_W + j * LANE_W + LANE_W / 2);
+      [l.x, l.y] = fromUV(p, l.u, l.v);
+    });
+  }
+}
+
+/** Where a vehicle the feed puts at lateral v should be drawn (see respace). */
+export function mapV(p, dir, v) {
+  if (!p.remap) return v;
+  const pts = p.lanes.filter((l) => l.dir === dir).map((l) => [l.srcV, l.v]).sort((a, b) => a[0] - b[0]);
+  if (!pts.length) return v;
+  if (v <= pts[0][0]) return pts[0][1] + (v - pts[0][0]);
+  for (let i = 1; i < pts.length; i++) {
+    if (v <= pts[i][0]) {
+      const [a0, a1] = pts[i - 1];
+      const [b0, b1] = pts[i];
+      return a1 + ((v - a0) / (b0 - a0 || 1)) * (b1 - a1);
+    }
+  }
+  const last = pts[pts.length - 1];
+  return last[1] + (v - last[0]);
+}
+
 function finish(p, road) {
   Object.assign(p, frameOf(p));
   for (const l of p.lanes) {
@@ -96,6 +140,10 @@ function finish(p, road) {
     l.u = u;
     l.v = v;
     l.w = l.w ?? LANE_W;
+  }
+  respace(p);
+  for (const l of p.lanes) {
+    const v = l.v;
     l.key = `${l.dir}${l.idx}`;
     // the booth island is on the driver's side: the right of the lane
     l.islandV = l.dir === "N" ? v - l.w / 2 - ISLAND_W / 2 : v + l.w / 2 + ISLAND_W / 2;

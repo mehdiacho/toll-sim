@@ -397,6 +397,13 @@ export async function mountViewer(root) {
             vv = ctx.v + (lane.v - ctx.v) * f;
             [X, Y] = PL.fromUV(ctx.p, ctx.u, vv);
           }
+        } else if (ctx.p.remap) {
+          // the feed's lanes are packed tighter than the drawn ones
+          const f = PL.flare(ctx.t);
+          if (f > 0) {
+            vv = ctx.v + (PL.mapV(ctx.p, ctx.dir, ctx.v) - ctx.v) * f;
+            [X, Y] = PL.fromUV(ctx.p, ctx.u, vv);
+          }
         }
         const lane = PL.laneAt(ctx.p, ctx.dir, vv, 0.8);
         const len = CLASS_INFO[cls]?.len ?? 4.5;
@@ -496,11 +503,11 @@ export async function mountViewer(root) {
     const lanes = p.lanes.filter((l) => l.dir === dir);
     const mid = lanes.reduce((a, l) => a + l.v, 0) / lanes.length;
     if (kind === "booths") {
-      // standing on an island nose between the mixed lanes, looking at the booths
+      // above a mixed lane, behind the queue, looking at the booths
       const mixed = lanes.filter((l) => l.type === "mixed").sort((a, b) => Math.abs(a.v) - Math.abs(b.v));
       const l = mixed[0] ?? lanes[0];
-      const pos = W(p, s * -36, 3.4, l.islandV + s * (narrow ? -1.5 : 0.6));
-      const target = W(p, s * 4, 1.4, l.islandV + s * 3.5);
+      const pos = W(p, s * (narrow ? -50 : -44), narrow ? 6 : 4.6, l.v);
+      const target = W(p, s * 4, 1.6, l.v + (l.islandV - l.v) * 0.6);
       moveTo(pos, target, dur);
     } else if (kind === "canopy") {
       const pos = W(p, s * (narrow ? -58 : -46), narrow ? 5.5 : 4.2, mid - s * 4);
@@ -508,8 +515,8 @@ export async function mountViewer(root) {
       moveTo(pos, target, dur);
     } else {
       const k = narrow ? 1.5 : 1;
-      const pos = W(p, s * -105 * k, 46 * k, s * (p.halfWidth + 62) * k);
-      const target = W(p, s * -18, 0, 0);
+      const pos = W(p, s * -88 * k, 34 * k, s * (p.halfWidth + 44) * k);
+      const target = W(p, s * -26, 0, s * 6);
       moveTo(pos, target, dur);
     }
   }
@@ -941,7 +948,9 @@ export async function mountViewer(root) {
 
     // plazas: lanes open, booms, signals and lights
     for (const p of plazas) p.setOpen(openLanes(p));
-    world.plazas.update(dt, now, night);
+    // plaza lighting switches on with a photocell, around sunset
+    const lamps = 1 - THREE.MathUtils.smoothstep(sky.elevationDeg, -3, 6);
+    world.plazas.update(dt, now, lamps);
 
     // altitude-dependent layers
     const alt = Math.max(height, distT * 0.6);

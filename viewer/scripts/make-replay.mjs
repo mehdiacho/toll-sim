@@ -289,7 +289,7 @@ for (const r of routes) {
     const p = at(r, s);
     const km = Math.hypot(p.x - gab.x, p.y - gab.y) / 1000;
     const up = gates.find((g) => g.route === r && g.s - s > 200 && g.s - s < 13500);
-    const boost = up ? (up.plaza.name === "Mmamashia" ? 5.2 : 3.4) : 0;
+    const boost = up ? (up.plaza.name === "Mmamashia" ? 9 : 3.4) : 0;
     const perKm = 0.5 + 4 * Math.exp(-km / 18) + boost;
     s += expo(perKm / 1000) + 22;
     if (s < r.len - 50) makeVehicle(r, s, false);
@@ -434,7 +434,9 @@ function plazaV(v, g, t, X, Y) {
   const q = PL.toUV(g.plaza, X, Y);
   if (!v.pz || v.pz.g !== g) return { q, vv: q.v, f: 0 };
   const f = PL.flare(t);
-  return { q, vv: q.v + (v.pz.lane.v - q.v) * f, f };
+  // srcV: the feed's own lane centre, which the viewer maps onto its drawn lanes
+  const target = v.pz.lane.srcV ?? v.pz.lane.v;
+  return { q, vv: q.v + (target - q.v) * f, f };
 }
 
 function roadXY(v) {
