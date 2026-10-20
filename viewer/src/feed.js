@@ -6,54 +6,13 @@
 //   onInit({ live, registry, recent, watchers, frame })
 //   onFrame(frame)   frame = { t, clock, vehicles, spawn, gone, events, stats, watchers }
 
+import { decodeReplay } from "./traffic.js";
+
+export { decodeReplay };
+
 const BASE = import.meta.env.BASE_URL; // "/projects/toll-sim/"
 export const STREAM_URL = `${BASE}live/live/stream`;
 const REPLAY_URL = `${BASE}replay.json`;
-
-/** Decode the compact replay into full frames shaped like the live feed. */
-export function decodeReplay(data) {
-  const pos = new Map(); // id -> [x, y]
-  const ang = new Map(); // id -> deg
-  const frames = [];
-  for (const f of data.frames) {
-    const vehicles = [];
-    const p = f.p;
-    let id = 0;
-    const next = new Map();
-    for (let i = 0; i < p.length; i += 3) {
-      id += p[i];
-      const old = pos.get(id);
-      const x = old ? old[0] + p[i + 1] : p[i + 1];
-      const y = old ? old[1] + p[i + 2] : p[i + 2];
-      let a = ang.get(id) ?? null;
-      let spd = 0;
-      if (old) {
-        const dx = x - old[0];
-        const dy = y - old[1];
-        const d = Math.hypot(dx, dy);
-        spd = Math.round(d / data.dt);
-        if (d > 3) a = ((Math.atan2(dx, dy) * 180) / Math.PI + 360) % 360;
-      }
-      next.set(id, [x, y]);
-      if (a != null) ang.set(id, a);
-      vehicles.push([id, x, y, a == null ? null : Math.round(a), spd]);
-    }
-    pos.clear();
-    for (const [k, v] of next) pos.set(k, v);
-    const frame = { t: f.t, vehicles, spawn: f.s, gone: f.g, events: f.e, stats: f.st };
-    if (f.b) frame.booms = f.b;
-    if (f.o) frame.lanes_open = f.o;
-    frames.push(frame);
-  }
-  // Vehicles first seen in a frame have no heading yet: borrow it from the next frame.
-  for (let k = 0; k < frames.length; k++) {
-    const later = frames[k + 1] ? new Map(frames[k + 1].vehicles.map((v) => [v[0], v])) : null;
-    for (const v of frames[k].vehicles) {
-      if (v[3] == null) v[3] = later?.get(v[0])?.[3] ?? 0;
-    }
-  }
-  return { dt: data.dt, frames, note: data.note };
-}
 
 /** Botswana wall clock as an ISO string with +02:00 offset. */
 export function botswanaIso(ms) {

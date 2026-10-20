@@ -5,23 +5,18 @@ import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRe
 import { buildWorld } from "./world.js";
 import { VehicleLayer, CLASS_INFO } from "./vehicles.js";
 import { classLen, frontToCentre } from "./vehicle-geometry.js";
+import { LAG, ingestVehicles, sampleAt } from "./traffic.js";
 import { Sky } from "./sky.js";
 import { Feed } from "./feed.js";
 import { footerHtml, esc, money, plateHtml, STATUS_LABEL, REASON_LABEL, METHOD_LABEL } from "./ui.js";
 import * as PL from "./plaza-layout.js";
 
 const BASE = import.meta.env.BASE_URL;
-const LAG = 2.4; // seconds the view runs behind the newest frame, to interpolate
 const TIME_PRESETS = { auto: null, day: "10:30", dusk: "18:35", night: "22:15" };
 const SHOT_KINDS = { overview: "Overview", booths: "Booths", canopy: "Canopy" };
 
 function hashParams() {
   return new URLSearchParams(location.hash.split("?")[1] ?? "");
-}
-
-function shortAngle(a, b) {
-  let d = ((b - a + 540) % 360) - 180;
-  return a + d;
 }
 
 function hash32(n) {
@@ -155,23 +150,7 @@ export async function mountViewer(root) {
   function ingest(frame, first) {
     for (const [id, plate, cls, flags] of frame.spawn ?? []) reg.set(id, { plate, cls, flags });
     const t = frame.t;
-    for (const [id, x, y, ang, spd] of frame.vehicles) {
-      let v = veh.get(id);
-      if (!v) {
-        v = { s: [], goneAt: null };
-        veh.set(id, v);
-      }
-      const sample = [t, x / 10, y / 10, ang ?? 0, (spd ?? 0) / 10];
-      const prev = v.s[v.s.length - 1];
-      if (prev) sample[3] = shortAngle(prev[3], sample[3]);
-      v.s.push(sample);
-      if (v.s.length > 4) v.s.shift();
-      v.goneAt = null;
-    }
-    for (const id of frame.gone ?? []) {
-      const v = veh.get(id);
-      if (v) v.goneAt = t;
-    }
+    ingestVehicles(veh, frame);
     newestT = t;
     if (first) renderT = t - LAG;
     if (frame.clock) {
@@ -308,25 +287,6 @@ export async function mountViewer(root) {
 
   // ------------------------------------------------------------ interpolation
   const current = new Map(); // id -> { id, cls, x, z, rot, X, Y, spd, heading }
-  function sampleAt(v, t) {
-    const s = v.s;
-    if (!s.length) return null;
-    if (t <= s[0][0]) return s[0];
-    for (let i = 1; i < s.length; i++) {
-      if (t <= s[i][0]) {
-        const a = s[i - 1];
-        const b = s[i];
-        const f = (t - a[0]) / (b[0] - a[0] || 1);
-        return [t, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f, a[3] + (b[3] - a[3]) * f, a[4] + (b[4] - a[4]) * f];
-      }
-    }
-    // short extrapolation past the newest sample
-    const b = s[s.length - 1];
-    const dt = Math.min(2.5, t - b[0]);
-    const th = (b[3] * Math.PI) / 180;
-    return [t, b[1] + Math.sin(th) * b[4] * dt, b[2] + Math.cos(th) * b[4] * dt, b[3], b[4]];
-  }
-
   /** Plaza and travel direction a vehicle is in, with its along-lane t and lateral v. */
   function plazaContext(X, Y, headingDeg) {
     for (const p of plazas) {
