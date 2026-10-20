@@ -45,10 +45,9 @@ services:
 
   momo:
     <<: *common
+    # Same image as the API (built by the api service below).
     image: toll-sim-api:latest
-    build:
-      context: ..
-      dockerfile: Dockerfile
+    pull_policy: never
     command: ["node", "dist/src/momo/server.js"]
     environment:
       PORT: 4000
