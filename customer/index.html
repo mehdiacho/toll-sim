@@ -136,7 +136,12 @@ const pula = (t) => "P " + (Number(t || 0) / 100).toLocaleString("en-BW", { mini
 const when = (d) => new Date(d).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Africa/Gaborone" });
 const day = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Gaborone" });
 const ref = (id) => String(id).slice(0, 8).toUpperCase();
-const PROVIDERS = [["orange_money", "Orange Money"], ["myzaka", "MyZaka"], ["smega", "Smega"]];
+// Every payment here goes to a mock service; no real wallet or provider is involved.
+const PROVIDERS = [["orange_money", "Orange Money (simulated)"], ["myzaka", "MyZaka (simulated)"], ["smega", "Smega (simulated)"]];
+// On the public demo nobody types a phone number: they pick how the simulated wallet behaves.
+const DEMO_WALLETS = [["71000001", "Approves"], ["71000000", "Not enough money"], ["71001111", "Cancelled on phone"]];
+let authOptions = null;
+const getOptions = async () => (authOptions ??= await api("GET", "/auth/options").catch(() => ({ demo: false, sms: true })));
 const REASONS = [
   ["not_my_vehicle", "That wasn't my vehicle"], ["plate_misread", "The camera misread the plate"], ["wrong_class", "I was charged the wrong vehicle class"],
   ["already_paid", "I already paid for this"], ["vehicle_stolen", "My vehicle was stolen"], ["other", "Something else"],
@@ -200,7 +205,30 @@ function updateDot(o) {
 }
 
 // --- sign in ---------------------------------------------------------------
-function login() {
+async function login() {
+  const opts = await getOptions();
+  if (opts.demo) return demoLogin(opts);
+  return smsLogin();
+}
+
+function demoLogin(opts) {
+  view.innerHTML = `<div class="login"><div class="logo">A1</div>
+    <h1 style="margin:0 0 6px;font-size:26px">Try the A1 toll app</h1>
+    <p style="color:var(--muted);margin:0 0 12px">This is a public demo with synthetic data. You get a sandbox account with a vehicle from the live simulation, usually one driving on the A1 right now.</p>
+    <p style="color:var(--muted);margin:0 0 20px">No phone number, PIN, card or ID is needed, and you should never enter real ones here. Payments are simulated. The sandbox closes after ${Number(opts.demo_hours) || 24} hours.</p>
+    <div class="err" id="err"></div><button class="btn block" id="go">Start with a sandbox account</button></div>`;
+  $("#go").onclick = async () => {
+    $("#go").disabled = true; $("#err").textContent = "";
+    try {
+      const r = await api("POST", "/auth/demo");
+      token = r.token; store.set("a1TollSession", token);
+      location.hash = "#/";
+      toast(r.plate_source === "live" ? `Your vehicle ${r.plate} is on the A1 right now` : `Your sandbox vehicle is ${r.plate}`);
+    } catch (e) { $("#err").textContent = e.message; $("#go").disabled = false; }
+  };
+}
+
+function smsLogin() {
   let phone = "", code = "";
   const stepPhone = () => {
     view.innerHTML = `<div class="login"><div class="logo">A1</div>
@@ -387,7 +415,8 @@ function openSheet(html) {
 function closeSheet() { $("#sheet")?.remove(); clearTimeout(pollTimer); }
 
 let pollTimer;
-function topupSheet(suggest) {
+async function topupSheet(suggest) {
+  const demo = (await getOptions()).demo;
   const amounts = [5000, 10000, 20000, 50000];
   let amount = typeof suggest === "number" && suggest > 0 ? Math.max(1000, Math.ceil(suggest / 1000) * 1000) : 10000;
   let provider = store.get("a1TollProvider") || "orange_money";
@@ -395,11 +424,21 @@ function topupSheet(suggest) {
     <label class="f">Pay with</label><div class="chips" id="prov">${PROVIDERS.map(([k, n]) => `<button class="chip" data-p="${k}">${n}</button>`).join("")}</div>
     <label class="f">Amount</label><div class="chips" id="amts">${amounts.map((a) => `<button class="chip" data-a="${a}">${pula(a)}</button>`).join("")}</div>
     <input class="f" id="amt" inputmode="decimal" style="margin-top:10px" aria-label="Amount in pula">
-    <label class="f" for="msisdn">Wallet number</label><input class="f" id="msisdn" type="tel" inputmode="tel" placeholder="72 345 678">
-    <div class="hint">Demo wallets: a number ending 0000 has no money, 1111 cancels the PIN prompt.</div>
+    ${demo
+      ? `<label class="f">Simulated wallet</label><div class="chips" id="wallets">${DEMO_WALLETS.map(([k, n]) => `<button class="chip" data-w="${k}">${n}</button>`).join("")}</div>
+         <input type="hidden" id="msisdn"><div class="hint">No real money moves and no real wallet is contacted. Pick how the pretend wallet answers.</div>`
+      : `<label class="f" for="msisdn">Wallet number</label><input class="f" id="msisdn" type="tel" inputmode="tel" placeholder="72 345 678">
+         <div class="hint">Simulated payments: a number ending 0000 has no money, 1111 cancels the PIN prompt.</div>`}
     <div class="err" id="err"></div><button class="btn block" id="pay">Top up</button>`);
   const msisdn = $("#msisdn", s);
-  msisdn.value = store.get("a1TollWallet") || (me?.account?.phone ?? "").replace(/^\+?267/, "");
+  if (demo) {
+    msisdn.value = DEMO_WALLETS[0][0];
+    const pick = (w) => { msisdn.value = w; s.querySelectorAll("[data-w]").forEach((b) => b.classList.toggle("on", b.dataset.w === w)); };
+    s.querySelectorAll("[data-w]").forEach((b) => (b.onclick = () => pick(b.dataset.w)));
+    pick(msisdn.value);
+  } else {
+    msisdn.value = store.get("a1TollWallet") || (me?.account?.phone ?? "").replace(/^\+?267/, "");
+  }
   const sync = () => {
     s.querySelectorAll("[data-p]").forEach((b) => b.classList.toggle("on", b.dataset.p === provider));
     s.querySelectorAll("[data-a]").forEach((b) => b.classList.toggle("on", Number(b.dataset.a) === amount));
@@ -415,7 +454,7 @@ function topupSheet(suggest) {
   $("#pay", s).onclick = async () => {
     $("#pay", s).disabled = true; $("#err", s).textContent = "";
     try {
-      store.set("a1TollProvider", provider); store.set("a1TollWallet", msisdn.value.trim());
+      store.set("a1TollProvider", provider); if (!demo) store.set("a1TollWallet", msisdn.value.trim());
       const t = await api("POST", "/me/topups", { provider, amount_thebe: amount, msisdn: msisdn.value.trim() }, { "idempotency-key": key });
       waitTopup(t, s);
     } catch (e) { $("#err", s).textContent = e.message; $("#pay", s).disabled = false; }
@@ -424,8 +463,8 @@ function topupSheet(suggest) {
 
 function waitTopup(t, s) {
   const name = Object.fromEntries(PROVIDERS)[t.provider] ?? t.provider;
-  $(".sheet", s).innerHTML = `<div class="grab"></div><div class="center"><div class="spinner"></div><h3>Approve on your phone</h3>
-    <p class="hint">${esc(name)} is asking you to confirm ${pula(t.amount_thebe)} with your PIN.</p></div>`;
+  $(".sheet", s).innerHTML = `<div class="grab"></div><div class="center"><div class="spinner"></div><h3>Waiting for the wallet</h3>
+    <p class="hint">${esc(name)} is confirming ${pula(t.amount_thebe)}. In real life you would approve this on your phone.</p></div>`;
   const started = Date.now();
   const tick = async () => {
     let cur;

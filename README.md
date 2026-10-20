@@ -350,6 +350,36 @@ operator would check ownership against the national vehicle registry before lett
 someone see, dispute or pay that plate's passages. That integration is out of scope
 here.
 
+## The always-on public demo
+
+`deploy/` runs the whole thing unattended on a small home server behind a Cloudflare
+tunnel: Postgres, the payment mock, the plate reader, the API and the SUMO bridge in
+`--live` mode (real time, demand by time of day, forever). Only the API is published.
+
+```sh
+# on the server, from a copy of this repo at $DATA_DIR/src
+sh deploy/nas.sh up      # generates $DATA_DIR/.env with random secrets the first time
+sh deploy/nas.sh ps
+sh deploy/nas.sh logs sim
+```
+
+What makes it safe to leave on a public URL:
+
+| Setting | Effect |
+| --- | --- |
+| `BASE_PATH=/projects/toll-sim/live` | every route also answers under the prefix; the pages' root-relative links and API calls are rewritten to it |
+| `PUBLIC_DASHBOARD=1` | the dashboard numbers need no key (they are synthetic); every write still does |
+| `DEMO_SIGNIN=1` | the motorist app signs in with a sandbox account only. Nobody is asked for a phone number, PIN, card or ID, and top-ups pick a simulated wallet outcome |
+| `DEMO_ACCOUNT_HOURS=24` | sandbox accounts are closed after a day: sessions revoked, plates released, account closed, all audited (nothing is deleted) |
+| `DEMO_RESET_HOUR=3` | at 03:00 CAT the database is wiped and re-seeded so the disk never fills; the bridge sees the new epoch on `/health` and restarts with a fresh fleet |
+| `TRUST_PROXY=1` | rate limits key on `CF-Connecting-IP`; without it that header is ignored |
+
+The sandbox account gets a plate the simulation has on the road right now when it
+can, so the visitor can watch their own car reach the next gantry. Every page carries
+a notice that this is an independent demo with synthetic data, the API sends a CSP and
+the usual security headers, public bodies are capped at 1 MB, and container logs
+rotate at 3 x 10 MB.
+
 ## Layout
 
 ```
@@ -363,6 +393,9 @@ src/momo/          the mock mobile-money service
 scripts/dev-lite.ts
 dashboard/         operations dashboard, review page, dispute desk and the corridor map
 customer/          the customer web app and its manifest
+live/              the live feed page and the 3D road geometry
+site/              the demo's landing page
+deploy/            compose file, Dockerfiles and script for the always-on demo
 sim/               SUMO network builder, demand generator, TraCI bridge
 anpr/              synthetic plates, CRNN plate reader, ONNX service
 test/              end-to-end tests over real HTTP, with PGlite or Postgres

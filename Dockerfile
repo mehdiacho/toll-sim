@@ -16,6 +16,8 @@ COPY package.json ./
 COPY db ./db
 COPY dashboard ./dashboard
 COPY customer ./customer
+COPY live ./live
+COPY site ./site
 USER node
 EXPOSE 3000
 CMD ["node", "dist/src/server.js"]

@@ -423,10 +423,12 @@ def main() -> None:
     seed = args.seed if args.seed is not None else (random.randrange(1 << 30) if args.live else 7)
     rng = random.Random(seed)
     api = Api(args.api, args.admin_key, args.ingest_key)
+    epoch = None
     for attempt in range(60 if args.live else 1):
         try:
-            status, _ = api.call("GET", "/health", timeout=5)
+            status, health = api.call("GET", "/health", timeout=5)
             if status == 200:
+                epoch = (health or {}).get("epoch")
                 break
             reason = f"health check returned {status}"
         except OSError as e:
@@ -548,6 +550,24 @@ def main() -> None:
             stats.add("error", len(batch))
             print(f"batch failed: {e}", file=sys.stderr)
 
+    # The public demo wipes its database every night. The back office then reports a
+    # new epoch on /health; the fleet this run created is gone, so stop and let the
+    # container restart with a fresh one.
+    reset_seen = threading.Event()
+
+    def watch_epoch():
+        while not reset_seen.wait(60):
+            try:
+                status, health = api.call("GET", "/health", timeout=5)
+            except OSError:
+                continue
+            if status == 200 and epoch and (health or {}).get("epoch") not in (None, epoch):
+                print("back office data was reset; restarting with a new fleet", flush=True)
+                reset_seen.set()
+
+    if args.live and epoch:
+        threading.Thread(target=watch_epoch, daemon=True).start()
+
     warmup_end = args.warmup * 3600 if args.live else 0
     wall0 = time.time()
     last_report = wall0
@@ -619,6 +639,8 @@ def main() -> None:
                 ahead = (t / args.speed) - (time.time() - wall0)
                 if ahead > 0:
                     time.sleep(ahead)
+            if reset_seen.is_set():
+                break
             if time.time() - last_report > (60 if args.live else 5):
                 last_report = time.time()
                 print(f"[{clock.strftime('%H:%M')}] vehicles {traci.vehicle.getIDCount():>4} | {stats.line()}", flush=True)
@@ -633,6 +655,8 @@ def main() -> None:
             pass
         pool.shutdown(wait=True)
         print(f"done in {time.time() - wall0:.0f}s | {stats.line()}")
+    if reset_seen.is_set():
+        sys.exit(3)
 
 
 if __name__ == "__main__":

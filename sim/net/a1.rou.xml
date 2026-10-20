@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+  <vType id="M" vClass="motorcycle" length="2.2" maxSpeed="30" accel="3.0" decel="6.0" speedFactor="normc(1.05,0.1,0.8,1.3)"/>
+  <vType id="1" vClass="passenger" length="4.6" maxSpeed="44" accel="2.6" decel="4.5" speedFactor="normc(1.0,0.12,0.7,1.4)"/>
+  <vType id="2" vClass="bus" length="7.5" maxSpeed="30" accel="1.4" decel="4.0" speedFactor="normc(0.95,0.08,0.7,1.2)"/>
+  <vType id="3" vClass="truck" length="12" maxSpeed="25" accel="1.0" decel="4.0" speedFactor="normc(0.9,0.06,0.7,1.1)"/>
+  <vType id="4" vClass="trailer" length="18.5" maxSpeed="22.2" accel="0.8" decel="3.5" speedFactor="normc(0.9,0.05,0.7,1.05)"/>
+  <vTypeDistribution id="mix" vTypes="M 1 2 3 4" probabilities="0.03 0.71 0.09 0.08 0.09"/>
+  <flow id="local_N_100" type="mix" begin="0" end="7200" probability="0.00694" from="25974545#0" to="664548416" departLane="best" departSpeed="max"/>
+  <flow id="local_N_132" type="mix" begin="0" end="7200" probability="0.00556" from="25974545#0" to="458759216" departLane="best" departSpeed="max"/>
+  <flow id="local_N_142" type="mix" begin="0" end="7200" probability="0.00526" from="25974545#0" to="654740038" departLane="best" departSpeed="max"/>
+  <flow id="local_N_178" type="mix" begin="0" end="7200" probability="0.00434" from="25974545#0" to="656026733" departLane="best" departSpeed="max"/>
+  <flow id="local_N_182" type="mix" begin="0" end="7200" probability="0.00426" from="25974545#0" to="215137298" departLane="best" departSpeed="max"/>
+  <flow id="local_N_26" type="mix" begin="0" end="7200" probability="0.01609" from="25974545#0" to="459889023#0" departLane="best" departSpeed="max"/>
+  <flow id="local_N_40" type="mix" begin="0" end="7200" probability="0.01290" from="25974545#0" to="220171999" departLane="best" departSpeed="max"/>
+  <flow id="local_N_61" type="mix" begin="0" end="7200" probability="0.00989" from="25974545#0" to="458759204" departLane="best" departSpeed="max"/>
+  <flow id="local_N_99" type="mix" begin="0" end="7200" probability="0.00699" from="25974545#0" to="458759220" departLane="best" departSpeed="max"/>
+  <flow id="local_S_100" type="mix" begin="0" end="7200" probability="0.00632" from="-217902384" to="307293145#0" departLane="best" departSpeed="max"/>
+  <flow id="local_S_134" type="mix" begin="0" end="7200" probability="0.00825" from="-458759220" to="307293145#0" departLane="best" departSpeed="max"/>
+  <flow id="local_S_151" type="mix" begin="0" end="7200" probability="0.00982" from="-323506146" to="307293145#0" departLane="best" departSpeed="max"/>
+  <flow id="local_S_170" type="mix" begin="0" end="7200" probability="0.01243" from="-458759206" to="307293145#0" departLane="best" departSpeed="max"/>
+  <flow id="local_S_186" type="mix" begin="0" end="7200" probability="0.01593" from="459911948" to="307293145#0" departLane="best" departSpeed="max"/>
+  <flow id="local_S_20" type="mix" begin="0" end="7200" probability="0.00404" from="1072135962" to="307293145#0" departLane="best" departSpeed="max"/>
+  <flow id="local_S_55" type="mix" begin="0" end="7200" probability="0.00479" from="-458759209" to="307293145#0" departLane="best" departSpeed="max"/>
+  <flow id="local_S_67" type="mix" begin="0" end="7200" probability="0.00512" from="-78313561" to="307293145#0" departLane="best" departSpeed="max"/>
+  <flow id="local_S_80" type="mix" begin="0" end="7200" probability="0.00552" from="654740040" to="307293145#0" departLane="best" departSpeed="max"/>
+  <flow id="regional_N_100" type="mix" begin="0" end="7200" probability="0.00278" from="664548416" to="-591662981" departLane="best" departSpeed="max"/>
+  <flow id="regional_N_132" type="mix" begin="0" end="7200" probability="0.00278" from="458759216" to="-591662981" departLane="best" departSpeed="max"/>
+  <flow id="regional_N_142" type="mix" begin="0" end="7200" probability="0.00278" from="654740038" to="-591662981" departLane="best" departSpeed="max"/>
+  <flow id="regional_N_178" type="mix" begin="0" end="7200" probability="0.00278" from="656026733" to="-591662981" departLane="best" departSpeed="max"/>
+  <flow id="regional_N_182" type="mix" begin="0" end="7200" probability="0.00278" from="215137298" to="-591662981" departLane="best" departSpeed="max"/>
+  <flow id="regional_N_26" type="mix" begin="0" end="7200" probability="0.00278" from="459889023#0" to="-591662981" departLane="best" departSpeed="max"/>
+  <flow id="regional_N_40" type="mix" begin="0" end="7200" probability="0.00278" from="220171999" to="-591662981" departLane="best" departSpeed="max"/>
+  <flow id="regional_N_61" type="mix" begin="0" end="7200" probability="0.00278" from="458759204" to="-591662981" departLane="best" departSpeed="max"/>
+  <flow id="regional_N_99" type="mix" begin="0" end="7200" probability="0.00278" from="458759220" to="-591662981" departLane="best" departSpeed="max"/>
+  <flow id="regional_S_100" type="mix" begin="0" end="7200" probability="0.00278" from="591662981" to="-217902384" departLane="best" departSpeed="max"/>
+  <flow id="regional_S_134" type="mix" begin="0" end="7200" probability="0.00278" from="591662981" to="-458759220" departLane="best" departSpeed="max"/>
+  <flow id="regional_S_151" type="mix" begin="0" end="7200" probability="0.00278" from="591662981" to="-323506146" departLane="best" departSpeed="max"/>
+  <flow id="regional_S_170" type="mix" begin="0" end="7200" probability="0.00278" from="591662981" to="-458759206" departLane="best" departSpeed="max"/>
+  <flow id="regional_S_186" type="mix" begin="0" end="7200" probability="0.00278" from="591662981" to="459911948" departLane="best" departSpeed="max"/>
+  <flow id="regional_S_20" type="mix" begin="0" end="7200" probability="0.00278" from="591662981" to="1072135962" departLane="best" departSpeed="max"/>
+  <flow id="regional_S_55" type="mix" begin="0" end="7200" probability="0.00278" from="591662981" to="-458759209" departLane="best" departSpeed="max"/>
+  <flow id="regional_S_67" type="mix" begin="0" end="7200" probability="0.00278" from="591662981" to="-78313561" departLane="best" departSpeed="max"/>
+  <flow id="regional_S_80" type="mix" begin="0" end="7200" probability="0.00278" from="591662981" to="654740040" departLane="best" departSpeed="max"/>
+  <flow id="through_N" type="mix" begin="0" end="7200" probability="0.06111" from="25974545#0" to="-591662981" departLane="best" departSpeed="max"/>
+  <flow id="through_S" type="mix" begin="0" end="7200" probability="0.06111" from="591662981" to="307293145#0" departLane="best" departSpeed="max"/>
+</routes>

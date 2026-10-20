@@ -51,6 +51,7 @@ import {
   resolveDisputeInput,
 } from "./services/disputes.js";
 import { hotlist, runEnforcement } from "./services/enforcement.js";
+import { epoch } from "./services/maintenance.js";
 import { listOutbox, outboxQuery } from "./services/outbox.js";
 import { dashboardSnapshot } from "./services/dashboard.js";
 import { getReview, getReviewImage, listReviews, resolveInput, resolveReview, reviewQuery } from "./services/reviews.js";
@@ -96,13 +97,49 @@ const bearer = (req: FastifyRequest) => {
 };
 
 export function buildApp({ db, gateway, config, logger = false, live = new LiveHub(config.liveMaxClients) }: AppDeps) {
-  const app = Fastify({ logger, bodyLimit: 8 * 1024 * 1024 });
+  const base = config.basePath;
+  const app = Fastify({
+    logger,
+    // Public routes take small bodies; the few that carry images raise it per route.
+    bodyLimit: 1024 * 1024,
+    // Behind a proxy that mounts the app under BASE_PATH, strip the prefix so every
+    // route is registered once and answers at both /x and BASE_PATH/x.
+    rewriteUrl: (req) => {
+      const url = req.url ?? "/";
+      if (!base || !url.startsWith(base)) return url;
+      const rest = url.slice(base.length);
+      if (rest === "" || rest.startsWith("?")) return "/" + rest;
+      return rest.startsWith("/") ? rest : url;
+    },
+  });
   app.addHook("onClose", async () => live.close());
+  const bigBody = { bodyLimit: 8 * 1024 * 1024 };
 
-  // Rate limits for what a public visitor can reach. The client address comes
-  // from Cloudflare's header when the app is told it sits behind the tunnel.
-  const clientIp = (req: FastifyRequest) =>
-    (config.trustProxy && (header(req, "cf-connecting-ip") || header(req, "x-forwarded-for")?.split(",")[0]?.trim())) || req.ip;
+  // BASE_PATH without the trailing slash: send the browser to BASE_PATH/ so the
+  // pages' relative links resolve under the prefix.
+  app.addHook("onRequest", async (req, reply) => {
+    if (!base) return;
+    const raw = req.originalUrl ?? req.raw.url ?? "";
+    const q = raw.indexOf("?");
+    const path = q < 0 ? raw : raw.slice(0, q);
+    if (path === base) return reply.redirect(base + "/" + (q < 0 ? "" : raw.slice(q)), 301);
+  });
+
+  // Security headers on everything the app answers (the SSE stream sets its own).
+  app.addHook("onSend", async (_req, reply, payload) => {
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("referrer-policy", "strict-origin-when-cross-origin");
+    reply.header("x-frame-options", "SAMEORIGIN");
+    reply.header("cross-origin-opener-policy", "same-origin");
+    reply.header("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=()");
+    reply.header("content-security-policy", CSP);
+    return payload;
+  });
+
+  // Rate limits for what a public visitor can reach. Behind the Cloudflare tunnel
+  // (TRUST_PROXY=1) the client address is Cloudflare's CF-Connecting-IP; otherwise
+  // that header is ignored, since anyone could send it.
+  const clientIp = (req: FastifyRequest) => (config.trustProxy && header(req, "cf-connecting-ip")?.trim()) || req.ip;
   const limited = (limiter: RateLimiter) => async (req: FastifyRequest, reply: FastifyReply) => {
     if (!limiter.allow(clientIp(req))) {
       return reply.code(429).send({ error: "rate_limited", message: "too many requests; slow down and try again in a minute" });
@@ -177,7 +214,7 @@ export function buildApp({ db, gateway, config, logger = false, live = new LiveH
 
   app.get("/health", async () => {
     await db.query("SELECT 1");
-    return { ok: true };
+    return { ok: true, epoch: epoch() };
   });
 
   // --- reference data -------------------------------------------------------
@@ -222,7 +259,7 @@ export function buildApp({ db, gateway, config, logger = false, live = new LiveH
     reviewThreshold: config.reviewConfidenceThreshold,
   });
 
-  app.post("/passages", { preHandler: requireRole("ingest", "admin") }, async (req, reply) => {
+  app.post("/passages", { ...bigBody, preHandler: requireRole("ingest", "admin") }, async (req, reply) => {
     const body = req.body as any;
     if (body && Array.isArray(body.events)) {
       const { events } = passageBatchInput.parse(body);
@@ -326,7 +363,7 @@ export function buildApp({ db, gateway, config, logger = false, live = new LiveH
 
   // --- disputes (operator side) ----------------------------------------------
   app.get("/disputes", admin, async (req) => listDisputes(db, disputeQuery.parse(req.query)));
-  app.post("/disputes", admin, async (req, reply) => {
+  app.post("/disputes", { ...bigBody, ...admin }, async (req, reply) => {
     const d = await raiseDispute(db, raiseDisputeInput.parse(req.body), { actor: req.actor, windowDays: config.disputeWindowDays });
     return reply.code(201).send(d);
   });
@@ -345,10 +382,15 @@ export function buildApp({ db, gateway, config, logger = false, live = new LiveH
   // --- customer app ------------------------------------------------------------
   app.post("/auth/demo", { preHandler: demoLimit }, async (req, reply) => {
     if (!config.demoSignin) return reply.code(404).send({ error: "not_found", message: "demo sign-in is not enabled here" });
-    return demoSignIn(db, Math.min(config.customerSessionDays, 7));
+    return demoSignIn(db, config.demoAccountHours, live.drivingUnregistered());
   });
-  app.get("/auth/options", async () => ({ demo: config.demoSignin, sms: !config.demoSignin || config.exposeLoginCodes }));
-  app.post("/auth/code", { preHandler: codeLimit }, async (req) => startLogin(db, startLoginInput.parse(req.body).phone, config.exposeLoginCodes));
+  // On the public demo nobody is asked for a phone number: sign-in is the sandbox only.
+  const smsSignin = !config.demoSignin || config.exposeLoginCodes;
+  app.get("/auth/options", async () => ({ demo: config.demoSignin, sms: smsSignin, demo_hours: config.demoAccountHours }));
+  app.post("/auth/code", { preHandler: codeLimit }, async (req, reply) => {
+    if (!smsSignin) return reply.code(404).send({ error: "not_found", message: "this demo signs in with a sandbox account only" });
+    return startLogin(db, startLoginInput.parse(req.body).phone, config.exposeLoginCodes);
+  });
   app.post("/auth/verify", async (req) => verifyLogin(db, verifyLoginInput.parse(req.body), config.customerSessionDays));
   app.post("/auth/logout", customer, async (req) => {
     await logout(db, bearer(req));
@@ -394,7 +436,7 @@ export function buildApp({ db, gateway, config, logger = false, live = new LiveH
     return settleViolation(db, id, req.accountId, req.actor);
   });
   app.get("/me/disputes", customer, async (req) => (await listDisputes(db, { account_id: req.accountId, limit: 100 })).items);
-  app.post("/me/disputes", customer, async (req, reply) => {
+  app.post("/me/disputes", { ...bigBody, ...customer }, async (req, reply) => {
     const d = await raiseDispute(db, raiseDisputeInput.parse(req.body), {
       actor: req.actor,
       accountId: req.accountId,
@@ -433,10 +475,15 @@ export function buildApp({ db, gateway, config, logger = false, live = new LiveH
   // --- operations dashboard -------------------------------------------------
   // The page and the corridor map are public; the numbers need the admin key,
   // which the page asks for and keeps in localStorage.
+  // HTML gets the demo footer and, under BASE_PATH, its root-relative URLs prefixed.
   const page =
     (folder: string, name: string, type = "text/html; charset=utf-8") =>
-    async (_req: FastifyRequest, reply: FastifyReply) =>
-      reply.type(type).send(readFileSync(join(assetDir(folder), name)));
+    async (_req: FastifyRequest, reply: FastifyReply) => {
+      const file = readFileSync(join(assetDir(folder), name));
+      if (type.startsWith("text/html")) return reply.type(type).send(preparePage(file.toString("utf8"), base, folder));
+      if (name.endsWith(".webmanifest") && base) return reply.type(type).send(file.toString("utf8").replaceAll('"/app', `"${base}/app`));
+      return reply.type(type).send(file);
+    };
   app.get("/dashboard", page("dashboard", "index.html"));
   app.get("/dashboard/review", page("dashboard", "review.html"));
   app.get("/dashboard/disputes", page("dashboard", "disputes.html"));
@@ -453,13 +500,22 @@ export function buildApp({ db, gateway, config, logger = false, live = new LiveH
 
   // --- live 3D view ------------------------------------------------------------
   // The simulation pushes frames with the ingest key; anyone can watch.
-  app.post("/live/frame", { preHandler: requireRole("ingest", "admin") }, async (req) => {
+  app.post("/live/frame", { ...bigBody, preHandler: requireRole("ingest", "admin") }, async (req) => {
     live.publish(liveFrameInput.parse(req.body));
     return { ok: true, watchers: live.watchers };
   });
+  // The feed is public and read-only, so other origins (a viewer in development) may read it.
+  const openRead = {
+    onSend: async (_req: FastifyRequest, reply: FastifyReply) => {
+      reply.header("access-control-allow-origin", "*");
+    },
+  };
   app.get("/live/stream", async (req, reply) => live.stream(req, reply));
-  app.get("/live/snapshot", async () => live.snapshot());
-  app.get("/live/summary", async () => liveSummary());
+  app.get("/live/snapshot", openRead, async (_req, reply) => {
+    reply.header("cache-control", "no-store");
+    return live.snapshot();
+  });
+  app.get("/live/summary", openRead, async () => liveSummary());
   app.get("/live", page("live", "index.html"));
   app.get("/live/road.json", page("live", "road.json", "application/json"));
   app.get("/live/vendor/three.module.min.js", vendor("three/build/three.module.min.js"));
@@ -488,10 +544,50 @@ export function buildApp({ db, gateway, config, logger = false, live = new LiveH
     return data;
   }
 
-  // The project page.
+  // The landing page: links to the live view, the dashboard and the motorist app.
   app.get("/", page("site", "index.html"));
 
   return app;
+}
+
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'self'",
+].join("; ");
+
+export const DEMO_NOTICE =
+  "Independent demo with synthetic data. Not affiliated with the Government of Botswana, any ministry, toll operator or payment provider.";
+
+/**
+ * Adds the demo footer to a page and, when the app is mounted under a prefix,
+ * makes its root-relative URLs work there: href/src/action attributes are
+ * rewritten, and fetch/EventSource calls to "/..." get the prefix at run time.
+ */
+export function preparePage(html: string, base: string, folder = ""): string {
+  const shim = base
+    ? `<script>(function(){var B=${JSON.stringify(base)};window.TOLL_BASE=B;` +
+      `var fix=function(u){return typeof u==="string"&&u.charAt(0)==="/"&&u.charAt(1)!=="/"&&u.indexOf(B+"/")!==0?B+u:u};` +
+      `var f=window.fetch;window.fetch=function(u,o){return f.call(this,fix(u),o)};` +
+      `var E=window.EventSource;if(E){var P=function(u,o){return new E(fix(u),o)};P.prototype=E.prototype;window.EventSource=P}})();</script>`
+    : `<script>window.TOLL_BASE="";</script>`;
+  let out = base ? html.replace(/(\s(?:href|src|action)=")\/(?!\/)/g, `$1${base}/`) : html;
+  out = /<head[^>]*>/i.test(out) ? out.replace(/<head[^>]*>/i, (m) => m + shim) : shim + out;
+  // The motorist app has a fixed tab bar at the bottom; keep the notice clear of it.
+  const pad = folder === "customer" ? "16px 16px calc(88px + env(safe-area-inset-bottom))" : "16px";
+  const footer =
+    `<footer class="demo-notice" style="font:12px/1.4 system-ui,sans-serif;color:#6b7a76;text-align:center;padding:${pad};max-width:720px;margin:0 auto">` +
+    `${DEMO_NOTICE}</footer>`;
+  return /<\/body>/i.test(out) ? out.replace(/<\/body>/i, footer + "</body>") : out + footer;
 }
 
 /** Midnight in Botswana (UTC+2 all year, no daylight saving) as an instant. */

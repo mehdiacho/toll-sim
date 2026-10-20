@@ -4,6 +4,7 @@ import { createPgDb, createPgliteDb } from "./db/index.js";
 import { migrate, seed } from "./db/migrate.js";
 import { httpGateway } from "./payments/gateway.js";
 import { scheduleEnforcement } from "./services/enforcement.js";
+import { scheduleMaintenance } from "./services/maintenance.js";
 
 const config = loadConfig();
 const db = config.databaseUrl ? createPgDb(config.databaseUrl) : await createPgliteDb(config.pgliteDir);
@@ -17,9 +18,16 @@ const stopEnforcement = scheduleEnforcement(db, config.enforcement, config.enfor
   app.log.info({ run }, "enforcement run"),
 );
 
+const stopMaintenance = scheduleMaintenance(db, {
+  demoAccountHours: config.demoSignin ? config.demoAccountHours : 0,
+  resetHour: config.demoResetHour,
+  log: (msg, data) => app.log.info(data ?? {}, msg),
+});
+
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, async () => {
     stopEnforcement();
+    stopMaintenance();
     await app.close();
     await db.close();
     process.exit(0);

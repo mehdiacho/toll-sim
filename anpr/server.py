@@ -27,7 +27,7 @@ import numpy as np
 import onnxruntime as ort
 from PIL import Image
 
-from model import decode, preprocess
+from codec import decode, preprocess
 from plates import capture, to_jpeg_b64
 
 OUT = Path(__file__).resolve().parent / "out"
@@ -87,11 +87,12 @@ def make_handler(reader: Reader):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=4100)
+    ap.add_argument("--host", default="127.0.0.1", help="0.0.0.0 inside a container")
     ap.add_argument("--model", default=str(OUT / "crnn.onnx"))
     args = ap.parse_args()
     reader = Reader(Path(args.model))
-    print(f"ANPR service on http://127.0.0.1:{args.port} ({Path(args.model).name})")
-    ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(reader)).serve_forever()
+    print(f"ANPR service on http://{args.host}:{args.port} ({Path(args.model).name})", flush=True)
+    ThreadingHTTPServer((args.host, args.port), make_handler(reader)).serve_forever()
 
 
 if __name__ == "__main__":

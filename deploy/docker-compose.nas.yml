@@ -1,0 +1,160 @@
+# The always-on public demo, as it runs on the NAS behind a Cloudflare tunnel.
+#
+#   Layout on the NAS (DATA_DIR, default /volume4/v4/toll-sim):
+#     .env        secrets, generated on the NAS, never committed (see deploy/nas.sh)
+#     pg/         Postgres data
+#     sim-data/   the simulation's fleet file
+#     src/        this repository
+#
+#   cd $DATA_DIR/src && sh deploy/nas.sh up
+#
+# Only the API is published (host port 8796). Postgres, the payment mock, the
+# plate reader and the simulation talk on an internal network.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-common: &common
+  restart: unless-stopped
+  logging: *logging
+  init: true
+
+services:
+  db:
+    <<: *common
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: toll
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: toll
+    volumes:
+      - ${DATA_DIR:-/volume4/v4/toll-sim}/pg:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U toll -d toll"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    shm_size: 128mb
+    cpus: 1.0
+    mem_limit: 768m
+
+  momo:
+    <<: *common
+    image: toll-sim-api:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["node", "dist/src/momo/server.js"]
+    environment:
+      PORT: 4000
+      MOMO_WEBHOOK_SECRET: ${MOMO_WEBHOOK_SECRET:?set MOMO_WEBHOOK_SECRET in .env}
+      MOMO_CALLBACK_DELAY_MS: 1500
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    cpus: 0.5
+    mem_limit: 192m
+
+  api:
+    <<: *common
+    image: toll-sim-api:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      momo:
+        condition: service_started
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://toll:${POSTGRES_PASSWORD}@db:5432/toll
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY in .env}
+      INGEST_API_KEY: ${INGEST_API_KEY:?set INGEST_API_KEY in .env}
+      MOMO_BASE_URL: http://momo:4000
+      MOMO_WEBHOOK_SECRET: ${MOMO_WEBHOOK_SECRET}
+      PUBLIC_BASE_URL: http://api:3000
+      BASE_PATH: /projects/toll-sim/live
+      PUBLIC_DASHBOARD: "1"
+      DEMO_SIGNIN: "1"
+      DEMO_ACCOUNT_HOURS: "24"
+      DEMO_RESET_HOUR: "3"
+      TRUST_PROXY: "1"
+      LIVE_MAX_CLIENTS: "300"
+      ENFORCEMENT_INTERVAL_MINUTES: "60"
+      EXPOSE_LOGIN_CODES: "0"
+    ports:
+      - "8796:3000"
+    networks: [internal, edge]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/projects/toll-sim/live/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    cpus: 1.0
+    mem_limit: 512m
+
+  anpr:
+    <<: *common
+    image: toll-sim-anpr:latest
+    build:
+      context: ..
+      dockerfile: deploy/anpr.Dockerfile
+    networks: [internal]
+    cpus: 1.0
+    mem_limit: 512m
+
+  sim:
+    <<: *common
+    image: toll-sim-sim:latest
+    build:
+      context: ..
+      dockerfile: deploy/sim.Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+      anpr:
+        condition: service_started
+    command:
+      - python
+      - bridge.py
+      - --live
+      - --api
+      - http://api:3000
+      - --scale
+      - ${SIM_SCALE:-0.7}
+      - --frame-interval
+      - "2"
+      - --anpr
+      - http://anpr:4100
+    environment:
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      INGEST_API_KEY: ${INGEST_API_KEY}
+      FLEET_FILE: /data/fleet.json
+    volumes:
+      - ${DATA_DIR:-/volume4/v4/toll-sim}/sim-data:/data
+    networks: [internal]
+    healthcheck:
+      # Healthy once the 3D feed is live, i.e. frames are reaching the API.
+      test: ["CMD", "python", "-c", "import json,urllib.request,sys; sys.exit(0 if json.load(urllib.request.urlopen('http://api:3000/live/snapshot', timeout=5))['live'] else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 20m
+    cpus: 1.5
+    mem_limit: 1536m
+
+networks:
+  internal:
+    internal: true
+  edge: {}

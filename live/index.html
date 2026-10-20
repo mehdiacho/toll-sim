@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A1 toll: live feed</title>
+<style>
+  :root { --bg: #0e1513; --card: #17201e; --line: #26332f; --text: #e5eeeb; --muted: #93a49f; --ok: #4fc1ae; --bad: #e0795f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 16px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .muted { color: var(--muted); }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 20px 0; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .kpi b { display: block; font-size: 22px; }
+  ul { list-style: none; padding: 0; margin: 0; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  li { padding: 8px 12px; border-top: 1px solid var(--line); display: flex; gap: 10px; font-variant-numeric: tabular-nums; }
+  li:first-child { border-top: 0; }
+  .charged { color: var(--ok); } .unpaid { color: var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Live feed</h1>
+  <p class="muted" id="status">Connecting…</p>
+  <div class="kpis">
+    <div class="kpi"><b id="veh">0</b><span class="muted">vehicles on the road</span></div>
+    <div class="kpi"><b id="reads">0</b><span class="muted">gantry reads seen</span></div>
+    <div class="kpi"><b id="watch">0</b><span class="muted">watching</span></div>
+  </div>
+  <ul id="events"></ul>
+  <p class="muted"><a href="/" style="color:inherit">Back to the demo</a></p>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+let reads = 0;
+const recent = [];
+function show(frame, watchers) {
+  if (frame) { $("veh").textContent = frame.vehicles.length.toLocaleString("en-GB"); $("status").textContent = `Simulated clock ${frame.clock}`; }
+  if (watchers !== undefined) $("watch").textContent = watchers;
+}
+function addEvents(list, clock) {
+  for (const e of list) { recent.unshift({ ...e, clock: e.clock || clock }); reads++; }
+  recent.length = Math.min(recent.length, 30);
+  $("reads").textContent = reads.toLocaleString("en-GB");
+  $("events").innerHTML = recent.map((e) => `<li><span class="muted">${esc(String(e.clock).slice(11, 19))}</span><span>${esc(e.gantry)} ${esc(e.dir)}</span><span>${esc(e.plate ?? "no read")}</span><span class="${e.status === "charged" ? "charged" : "unpaid"}">${esc(e.status)}</span></li>`).join("");
+}
+const es = new EventSource("/live/stream");
+es.addEventListener("init", (m) => { const s = JSON.parse(m.data); show(s.frame, s.watchers); addEvents([...s.recent].reverse(), ""); if (!s.live) $("status").textContent = "The simulation is not running right now."; });
+es.addEventListener("frame", (m) => { const f = JSON.parse(m.data); show(f, f.watchers); addEvents(f.events, f.clock); });
+es.onerror = () => { $("status").textContent = "Reconnecting…"; };
+</script>
+</body>
+</html>

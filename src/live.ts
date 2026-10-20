@@ -84,6 +84,22 @@ export class LiveHub {
     };
   }
 
+  /**
+   * Unregistered vehicles on the road in the latest frame, for the demo sign-in to
+   * hand out. Empty when the feed has gone quiet.
+   */
+  drivingUnregistered(limit = 50): { plate: string; vehicle_class: string }[] {
+    if (!this.last || Date.now() - this.lastAt > 30_000) return [];
+    const out: { plate: string; vehicle_class: string }[] = [];
+    for (const [id] of this.last.vehicles) {
+      const r = this.registry.get(id);
+      if (!r || r[2] & 1) continue;
+      out.push({ plate: r[0], vehicle_class: r[1] });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
   /** Streams frames to one viewer until it disconnects. gzip when the client accepts it. */
   stream(req: FastifyRequest, reply: FastifyReply) {
     if (this.clients.size >= this.maxClients) {
@@ -97,6 +113,8 @@ export class LiveHub {
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
       "x-accel-buffering": "no",
+      "access-control-allow-origin": "*",
+      "x-content-type-options": "nosniff",
       ...(gzip ? { "content-encoding": "gzip", vary: "accept-encoding" } : {}),
     });
     let z: Gzip | null = null;

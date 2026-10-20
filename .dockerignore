@@ -4,3 +4,12 @@ dist/
 .pglite/
 coverage/
 .git/
+**/.venv/
+**/__pycache__/
+sim/data/
+sim/out/
+anpr/out/*.pt
+anpr/out/*.csv
+anpr/out/*.txt
+test/
+deploy/.env

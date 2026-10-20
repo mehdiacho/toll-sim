@@ -64,6 +64,8 @@ function decideOutcome(provider: Provider, payer: string): MockPayment["outcome"
   return { status: "succeeded", failure_reason: null, sendCallback: true };
 }
 
+const MAX_REMEMBERED = 50_000;
+
 export function createMomoApp(opts: MomoOptions) {
   const delay = opts.callbackDelayMs ?? 1500;
   const maxAttempts = opts.maxAttempts ?? 4;
@@ -136,6 +138,8 @@ export function createMomoApp(opts: MomoOptions) {
       callback_attempts: 0,
     };
     payments.set(p.provider_ref, p);
+    // Long-running demo: forget the oldest payments rather than grow without bound.
+    if (payments.size > MAX_REMEMBERED) payments.delete(payments.keys().next().value!);
     later(delay, () => {
       p.status = p.outcome.status;
       p.failure_reason = p.outcome.failure_reason;

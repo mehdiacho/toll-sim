@@ -15,6 +15,7 @@ since free-flow gantry cameras are triggered per lane and crop the plate region.
 from __future__ import annotations
 
 import io
+import os
 import random
 import string
 from pathlib import Path
@@ -22,7 +23,28 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-FONT_DIR = Path("C:/Windows/Fonts")
+FONT_DIR = Path(os.environ.get("FONT_DIR", "C:/Windows/Fonts"))
+# On Linux (the Docker image) the Windows fonts aren't there: use the closest free
+# ones. Liberation Sans is metric-compatible with Arial; DejaVu covers the rest.
+FALLBACK_FONTS = {
+    "bahnschrift.ttf": "LiberationSansNarrow-Bold.ttf",
+    "ARIALNB.TTF": "LiberationSansNarrow-Bold.ttf",
+    "arialbd.ttf": "LiberationSans-Bold.ttf",
+    "tahomabd.ttf": "DejaVuSans-Bold.ttf",
+    "verdanab.ttf": "DejaVuSans-Bold.ttf",
+}
+FALLBACK_DIRS = [Path("/usr/share/fonts/truetype/liberation"), Path("/usr/share/fonts/truetype/dejavu")]
+
+
+def font_path(name: str) -> Path:
+    path = FONT_DIR / name
+    if path.exists():
+        return path
+    alt = FALLBACK_FONTS.get(name)
+    for d in FALLBACK_DIRS:
+        if alt and (d / alt).exists():
+            return d / alt
+    return path
 # Bahnschrift is DIN 1451-based, the family most plate typefaces descend from;
 # the others add variety so the model does not learn one font.
 FONTS = [("bahnschrift.ttf", 0.55, "Bold"), ("ARIALNB.TTF", 0.2, None), ("arialbd.ttf", 0.1, None),
@@ -37,7 +59,7 @@ _font_cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
 def font(name: str, size: int, variation: str | None) -> ImageFont.FreeTypeFont:
     key = (name, size)
     if key not in _font_cache:
-        f = ImageFont.truetype(str(FONT_DIR / name), size)
+        f = ImageFont.truetype(str(font_path(name)), size)
         if variation:
             try:
                 f.set_variation_by_name(variation)

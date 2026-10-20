@@ -31,6 +31,15 @@ export interface Config {
   trustProxy: boolean;
   /** Most viewers the live 3D feed will stream to at once. */
   liveMaxClients: number;
+  /**
+   * Path prefix the app is mounted under behind a proxy, e.g. /projects/toll-sim/live.
+   * Empty for the root. Routes answer both with and without it.
+   */
+  basePath: string;
+  /** Public demo: sandbox accounts from POST /auth/demo are closed after this many hours. */
+  demoAccountHours: number;
+  /** Public demo: wipe and re-seed the database every night at this Botswana hour (0-23). Unset: never. */
+  demoResetHour: number | null;
 }
 
 export interface EnforcementPolicy {
@@ -80,5 +89,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     demoSignin: env.DEMO_SIGNIN === "1",
     trustProxy: env.TRUST_PROXY === "1",
     liveMaxClients: Number(env.LIVE_MAX_CLIENTS ?? 300),
+    basePath: normalizeBasePath(env.BASE_PATH),
+    demoAccountHours: Number(env.DEMO_ACCOUNT_HOURS ?? 24),
+    demoResetHour: env.DEMO_RESET_HOUR ? Number(env.DEMO_RESET_HOUR) : null,
   };
+}
+
+/** "/projects/x/" -> "/projects/x"; "" or "/" -> "". */
+export function normalizeBasePath(raw: string | undefined): string {
+  const trimmed = (raw ?? "").trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  if (!/^(\/[A-Za-z0-9._~-]+)+$/.test(trimmed.startsWith("/") ? trimmed : "/" + trimmed)) {
+    throw new Error("BASE_PATH must look like /some/path");
+  }
+  return trimmed.startsWith("/") ? trimmed : "/" + trimmed;
 }
