@@ -1,5 +1,7 @@
 # toll-sim
 
+> Picking this up? Read [`docs/HANDOFF.md`](docs/HANDOFF.md) for hosting, deploy and current state.
+
 The back office for a toll on Botswana's A1, built as a portfolio project. The
 three sites are South African-style mainline toll plazas: five lanes per direction
 behind booms, an e-tag lane for tagged accounts and booths for cash and card. A
